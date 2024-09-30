@@ -1,3 +1,5 @@
+file(COPY shaders DESTINATION .)
+
 # ~ build dependencies
 find_package(Vulkan REQUIRED FATAL_ERROR)
 add_subdirectory(deps)
