@@ -10,14 +10,16 @@ void init(int width, int height, const char *title) {
 
   if (!opl_init())
     fatal("failed to initialize opl");
-  info("opl initialized");
+  trace("opl initialized");
 
   s_window = opl_window_open(width, height, title);
   if (!s_window)
     fatal("failed to create window");
-  info("opened window");
+  trace("opened window");
 
-  _gfx_init();
+  _gfx_init(s_window);
+
+  info("oe initialized");
 }
 
 int should_close(void) {
@@ -29,10 +31,12 @@ void quit(void) {
   _gfx_quit();
 
   opl_window_close(s_window);
-  info("widow closed");
+  trace("widow closed");
 
   opl_quit();
-  info("opl terminated");
+  trace("opl terminated");
+
+  info("oe terminated");
 
   _log_quit();
 }

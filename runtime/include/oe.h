@@ -46,6 +46,13 @@ extern int should_close(void);
 // +------------------------------------------------------------------+
 
 /**
+ * @brief 32 bit color.
+ */
+typedef struct color {
+  unsigned char r, g, b, a;
+} color_t;
+
+/**
  * @brief Updates window state and starts frame drawing.
  */
 extern void draw_begin(void);
@@ -54,6 +61,17 @@ extern void draw_begin(void);
  * @brief Ends frame drawing and presents drawn frame.
  */
 extern void draw_end(void);
+
+// +------------------------------------------------------------------+
+// |                            math                                  |
+// +------------------------------------------------------------------+
+
+/**
+ * @brief 2 dimensional vector.
+ */
+typedef struct vec2 {
+  float x, y;
+} vec2_t;
 
 // +------------------------------------------------------------------+
 // |                         debugging                                |

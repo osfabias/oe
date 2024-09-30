@@ -1,5 +1,7 @@
 #include <string.h>
 #include <stdint.h>
+#include <stdint.h>
+#include <limits.h>
 
 #define OPL_INCLUDE_VULKAN
 #include <opl.h>
@@ -10,7 +12,8 @@
 #include "oe.h"
 #include "internal.h"
 
-/*
+#define MAX_SWAPCHAIN_IMAGES_COUNT 3
+
 static const char* s_device_ext_names[] = {
 #ifdef OE_PLATFORM_MACOS
 #define DEVICE_EXT_COUNT 2
@@ -21,28 +24,132 @@ static const char* s_device_ext_names[] = {
   VK_KHR_SWAPCHAIN_EXTENSION_NAME,
 #endif
 };
-*/
 
 static VkInstance s_instance;
 static VkPhysicalDevice s_gpu;
-// static VkDevice s_device;
+static VkDevice s_device;
+static struct {
+  uint32_t graphics, transfer, present;
+} s_queue_families;
+static struct {
+  VkQueue graphics, transfer, present;
+} s_queues;
+static VkSurfaceKHR s_surface;
+static uint32_t s_frames_count;
+static VkSwapchainKHR s_swapchain;
+static VkImage s_swapchain_images[MAX_SWAPCHAIN_IMAGES_COUNT];
+static VkImageView s_swapchain_views[MAX_SWAPCHAIN_IMAGES_COUNT];
+static VkRenderPass s_render_pass;
+static VkPipelineLayout s_pipeline_layout;
+static VkPipeline s_pipeline;
+
+static void _find_queue_families(void);
+static void _check_device_exts(void);
 
 static void _instance_create(void);
 static void _select_gpu(void);
-// static void _device_create(void);
+static void _device_create(void);
+static void _obtain_queues(void);
+static void _surface_create(opl_window_t window);
+static void _swapchain_create(VkSwapchainKHR old_swapchain);
+static void _swapchain_get_images(void);
+static void _swapchain_image_views_create(void);
+static void _render_pass_create(void);
+static void _pipeline_layout_create(void);
+static void _pipeline_create(void);
 
-void _gfx_init(void) {
+void _gfx_init(opl_window_t window) {
   _instance_create();
   _select_gpu();
+  _surface_create(window);
+  _find_queue_families();
+  _device_create();
+  _obtain_queues();
+  _check_device_exts();
+  _swapchain_create(VK_NULL_HANDLE);
+  _swapchain_get_images();
+  _swapchain_image_views_create();
+  _render_pass_create();
+  _pipeline_layout_create();
+  _pipeline_create();
 
-  info("gfx initialized");
+  trace("gfx initialized");
 }
 
 void _gfx_quit(void) {
-  vkDestroyInstance(s_instance, NULL);
-  trace("Vulkan instance destroyed");
+  trace("destroying Vulkan objects...");
 
-  info("gfx terminated");
+  vkDestroyPipeline(s_device, s_pipeline, NULL);
+  vkDestroyPipelineLayout(s_device, s_pipeline_layout, NULL);
+  vkDestroyRenderPass(s_device, s_render_pass, NULL);
+
+  for (uint32_t i = 0; i < s_frames_count; ++i)
+    vkDestroyImageView(s_device, s_swapchain_views[i], NULL);
+
+  vkDestroySwapchainKHR(s_device, s_swapchain, NULL);
+  vkDestroyDevice(s_device, NULL);
+  vkDestroySurfaceKHR(s_instance, s_surface, NULL);
+  vkDestroyInstance(s_instance, NULL);
+
+  trace("gfx terminated");
+}
+
+void _find_queue_families(void) {
+  uint32_t count;
+  vkGetPhysicalDeviceQueueFamilyProperties(s_gpu, &count, NULL);
+
+  VkQueueFamilyProperties props[count];
+  vkGetPhysicalDeviceQueueFamilyProperties(s_gpu, &count, props);
+
+  s_queue_families.graphics = UINT32_MAX;
+  s_queue_families.present  = UINT32_MAX;
+
+  for (uint32_t i = 0; i < count; ++i) {
+    // graphics family
+    if (
+      s_queue_families.graphics == UINT32_MAX &&
+      props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT
+    )
+        s_queue_families.graphics = i;
+
+    // present family
+    VkBool32 support_present = 0;
+    vkGetPhysicalDeviceSurfaceSupportKHR(s_gpu, i, s_surface,
+                                         &support_present);
+    if (support_present)
+      s_queue_families.present = i;
+  }
+
+  if (
+    s_queue_families.graphics == UINT32_MAX ||
+    s_queue_families.present  == UINT32_MAX
+  )
+    fatal("failed to find queue families");
+  debug("queue families:\n" "\tgraphics: %u\n" "\tpresent: %u",
+        s_queue_families.graphics, s_queue_families.present);
+}
+
+void _check_device_exts(void) {
+  uint32_t count;
+  vkEnumerateDeviceExtensionProperties(s_gpu, NULL, &count, NULL);
+
+  VkExtensionProperties props[count];
+  vkEnumerateDeviceExtensionProperties(s_gpu, NULL, &count, props);
+
+  for (int i = 0; i < DEVICE_EXT_COUNT; ++i) {
+    int available = 0;
+
+    for (uint32_t j = 0; j < count; ++j) {
+      if (!strcmp(s_device_ext_names[i], props[j].extensionName)) {
+        available = 1;
+        break;
+      }
+    }
+
+    if (!available)
+      fatal("choosen gpu doesn't support %s extension",
+            s_device_ext_names[i]);
+  }
 }
 
 void _instance_create(void) {
@@ -120,14 +227,26 @@ void _select_gpu(void) {
   debug("gpu: %s", props.deviceName);
 }
 
-/*
 void _device_create(void) {
+  const float queue_priorities[] = { 1.0f };
+
+  const VkDeviceQueueCreateInfo queue_info = {
+    .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .queueCount = 1,
+    .queueFamilyIndex = s_queue_families.graphics,
+    .pQueuePriorities = queue_priorities
+  };
+
   const VkDeviceCreateInfo info = {
     .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
     .flags = 0,
     .pNext = NULL,
     .enabledExtensionCount = DEVICE_EXT_COUNT,
     .ppEnabledExtensionNames = s_device_ext_names,
+    .queueCreateInfoCount = 1,
+    .pQueueCreateInfos = &queue_info,
   };
 
   const VkResult res = vkCreateDevice(s_gpu, &info, NULL, &s_device);
@@ -135,5 +254,382 @@ void _device_create(void) {
     fatal("failed to create Vulkan device: %d", res);
   trace("Vulkan device created");
 }
-*/
+
+void _obtain_queues(void) {
+  vkGetDeviceQueue(s_device, s_queue_families.graphics, 0,
+                   &s_queues.graphics);
+}
+
+void _surface_create(opl_window_t window) {
+  const VkResult res = opl_vk_surface_create(window, s_instance, NULL,
+                                             &s_surface);
+  if (res != VK_SUCCESS)
+    fatal("failed to create Vulkan surface: %d", res);
+  trace("Vulkan surface created");
+}
+
+void _swapchain_create(VkSwapchainKHR old_swapchain) {
+  VkSurfaceCapabilitiesKHR capabs;
+  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(s_gpu, s_surface, &capabs);
+
+  VkSwapchainCreateInfoKHR info = {
+    .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+    .flags = 0,
+    .pNext = 0,
+    .surface = s_surface,
+    .minImageCount = capabs.minImageCount,
+
+    // NOTE: asssert for now that all hardware we gonna ship our games
+    //       on supports this format
+    .imageFormat = VK_FORMAT_B8G8R8A8_SRGB,
+
+
+    // NOTE: asssert for now that all hardware we gonna ship our games
+    //       on supports this color space 
+    .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
+
+    .imageExtent = capabs.currentExtent,
+    .imageArrayLayers = 1,
+    .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                  VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+    .preTransform = capabs.currentTransform,
+    .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+
+    // NOTE: asssert for now that all hardware we gonna ship our games
+    //       on supports this present mode
+    .presentMode = VK_PRESENT_MODE_MAILBOX_KHR,
+
+    .clipped = VK_TRUE,
+    .oldSwapchain = old_swapchain
+  };
+
+  const uint32_t queue_families[2] = {
+    s_queue_families.graphics,
+    s_queue_families.present
+  };
+
+  if (s_queue_families.graphics != s_queue_families.present) {
+    info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+    info.queueFamilyIndexCount = 2;
+    info.pQueueFamilyIndices = queue_families;
+  } else {
+    info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    info.queueFamilyIndexCount = 0;
+    info.pQueueFamilyIndices = NULL;
+  }
+
+  s_frames_count = capabs.minImageCount;
+
+  const VkResult res = vkCreateSwapchainKHR(s_device, &info, NULL,
+                                            &s_swapchain);
+  if (res != VK_SUCCESS)
+    fatal("failed to create Vulkan swapchain: %d", res);
+  debug("Vulkan swapchain created: %ux%u",
+        capabs.currentExtent.width, capabs.currentExtent.height);
+}
+
+void _swapchain_get_images(void) {
+  vkGetSwapchainImagesKHR(s_device, s_swapchain, &s_frames_count,
+                          s_swapchain_images);
+  debug("obtained %u swapchain image%c", s_frames_count,
+        s_frames_count > 1 ? 's' : '\0');
+}
+
+void _swapchain_image_views_create(void) {
+  VkImageViewCreateInfo info = {
+    .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .format = VK_FORMAT_B8G8R8A8_SRGB,
+    .viewType = VK_IMAGE_VIEW_TYPE_2D,
+    .components = {
+      .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+      .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+      .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+      .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+    },
+    .subresourceRange = {
+      .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+      .layerCount = 1,
+      .levelCount = 1,
+      .baseArrayLayer = 0,
+      .baseMipLevel = 0,
+    },
+  };
+
+  for (uint32_t i = 0; i < s_frames_count; ++i) {
+    info.image = s_swapchain_images[i];
+
+    const VkResult res = vkCreateImageView(s_device, &info, NULL,
+                                           &s_swapchain_views[i]);
+    if (res != VK_SUCCESS)
+      fatal("failed to create image view for %d swapchain image", i);
+  }
+
+  trace("Vulkan swapchain image views created");
+}
+
+void _render_pass_create(void) {
+  const VkAttachmentDescription attachment_desc = {
+    .flags = 0,
+    .format = VK_FORMAT_B8G8R8A8_SRGB,
+    .samples = VK_SAMPLE_COUNT_1_BIT,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+    .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+    .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+  };
+
+  const VkAttachmentReference attachment_ref = {
+    .attachment = 0,
+    .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+  };
+
+  const VkSubpassDescription subpass_desc = {
+    .flags = 0,
+    .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+    .colorAttachmentCount = 1,
+    .pColorAttachments = &attachment_ref,
+    .inputAttachmentCount = 0,
+    .pInputAttachments = NULL,
+    .pResolveAttachments = NULL,
+    .pDepthStencilAttachment = NULL,
+    .preserveAttachmentCount = 0,
+    .pPreserveAttachments = NULL,
+  };
+
+  const VkRenderPassCreateInfo info = {
+    .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .attachmentCount = 1,
+    .pAttachments = &attachment_desc,
+    .dependencyCount = 0,
+    .pDependencies = NULL,
+    .subpassCount = 1,
+    .pSubpasses = &subpass_desc,
+  };
+
+  const VkResult res = vkCreateRenderPass(s_device, &info, NULL,
+                                          &s_render_pass);
+  if (res != VK_SUCCESS)
+    fatal("failed to create Vulkan render pass: %d", res);
+  trace("render pass created");
+}
+
+void _pipeline_layout_create(void) {
+  const VkPipelineLayoutCreateInfo info = {
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .setLayoutCount = 0,
+    .pSetLayouts = NULL,
+    .pushConstantRangeCount = 0,
+    .pPushConstantRanges = NULL
+  };
+
+  const VkResult res = vkCreatePipelineLayout(s_device, &info, NULL,
+                                              &s_pipeline_layout);
+  if (res != VK_SUCCESS)
+    fatal("failed to create Vulkan pipeline layout: %d", res);
+  trace("Vulkan pipeline layout created");
+}
+
+void _pipeline_create(void) {
+#error "shader module creation not implemented"
+  const VkShaderModule vert_shader = 0, frag_shader = 0;
+
+  const VkPipelineShaderStageCreateInfo stages[2] = {
+    {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+      .flags = 0,
+      .pNext = NULL,
+      .stage = VK_SHADER_STAGE_VERTEX_BIT,
+      .module = vert_shader,
+      .pName = "main",
+      .pSpecializationInfo = NULL
+    },
+    {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+      .flags = 0,
+      .pNext = NULL,
+      .stage = VK_SHADER_STAGE_VERTEX_BIT,
+      .module = frag_shader,
+      .pName = "main",
+      .pSpecializationInfo = NULL
+    },
+  };
+
+  const VkVertexInputAttributeDescription vert_input_attr_descs[3] = {
+    { // position
+      .binding = 0,
+      .format = VK_FORMAT_R32G32_SFLOAT,
+      .offset = 0,
+    },
+    { // color
+      .binding = 0,
+      .format = VK_FORMAT_R8G8B8A8_UINT,
+      .offset = offsetof(vert_t, color),
+    },
+    { // texture coordinates
+      .binding = 0,
+      .format = VK_FORMAT_R32G32_SFLOAT,
+      .offset = offsetof(vert_t, tex_coord)
+    },
+  };
+
+  const VkVertexInputBindingDescription vert_input_bind_desc = {
+    .binding = 0,
+    .stride = sizeof(vert_t),
+    .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+  };
+
+  const VkPipelineVertexInputStateCreateInfo vertex_input_state = {
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .vertexAttributeDescriptionCount = 3,
+    .pVertexAttributeDescriptions = vert_input_attr_descs,
+    .vertexBindingDescriptionCount = 1,
+    .pVertexBindingDescriptions = &vert_input_bind_desc,
+  };
+
+  const VkPipelineInputAssemblyStateCreateInfo input_assembly_state = {
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+    .primitiveRestartEnable = VK_FALSE
+  };
+
+  const VkPipelineTessellationStateCreateInfo tesselation_state = {
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .patchControlPoints = 0,
+  };
+
+  VkSurfaceCapabilitiesKHR swapchain_capabs;
+  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(s_gpu, s_surface,
+                                            &swapchain_capabs);
+
+  const VkViewport viewport = {
+    .x = 0.0f,
+    .y = 0.0f,
+    .width = swapchain_capabs.currentExtent.width,
+    .height = swapchain_capabs.currentExtent.height,
+    .minDepth = 0.0f,
+    .maxDepth = 1.0f,
+  };
+
+  const VkRect2D scissor = {
+    .offset = {0, 0},
+    .extent = swapchain_capabs.currentExtent,
+  };
+
+  const VkPipelineViewportStateCreateInfo viewport_state = {
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .scissorCount = 1,
+    .pScissors = &scissor,
+    .viewportCount = 1,
+    .pViewports = &viewport,
+  };
+
+  const VkPipelineRasterizationStateCreateInfo rasterization_state = {
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .rasterizerDiscardEnable = VK_TRUE,
+    .polygonMode = VK_POLYGON_MODE_FILL,
+    .cullMode = VK_CULL_MODE_BACK_BIT,
+    .frontFace = VK_FRONT_FACE_CLOCKWISE,
+    .depthBiasEnable = VK_FALSE,
+    // .depthBiasConstantFactor
+    .depthClampEnable = VK_FALSE,
+    // .depthBiasClamp
+    // .depthBiasSlopeFactor
+    .lineWidth = 1.0f,
+  };
+
+  const VkPipelineMultisampleStateCreateInfo multisample_state = {
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+    .sampleShadingEnable = VK_FALSE,
+    // .minSampleShading
+    // .pSampleMask
+    .alphaToCoverageEnable = VK_FALSE,
+    .alphaToOneEnable = VK_FALSE
+  };
+
+  const VkPipelineColorBlendAttachmentState color_blend_attachment = {
+    .colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+                      VK_COLOR_COMPONENT_G_BIT |
+                      VK_COLOR_COMPONENT_B_BIT | 
+                      VK_COLOR_COMPONENT_A_BIT,
+    .blendEnable = VK_TRUE,
+    .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+    .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+    .colorBlendOp = VK_BLEND_OP_ADD,
+    .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+    .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+    .alphaBlendOp = VK_BLEND_OP_ADD,
+  };
+
+  const VkPipelineColorBlendStateCreateInfo color_blend_state = {
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .logicOpEnable = VK_FALSE,
+    // .logicOp
+    .attachmentCount = 1,
+    .pAttachments = &color_blend_attachment,
+    .blendConstants = { 1.0f, 1.0f, 1.0f, 1.0f }
+  };
+
+  const VkDynamicState dynamic_states[2] = {
+    VK_DYNAMIC_STATE_VIEWPORT,
+    VK_DYNAMIC_STATE_SCISSOR
+  };
+
+  const VkPipelineDynamicStateCreateInfo dynamic_state = {
+    .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+    .dynamicStateCount = 2,
+    .pDynamicStates = dynamic_states,
+  };
+
+  const VkGraphicsPipelineCreateInfo info = {
+    .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .stageCount = 2,
+    .pStages = stages,
+    .pVertexInputState = &vertex_input_state,
+    .pInputAssemblyState = &input_assembly_state,
+    .pTessellationState = &tesselation_state,
+    .pViewportState = &viewport_state,
+    .pRasterizationState = &rasterization_state,
+    .pMultisampleState = &multisample_state,
+    .pDepthStencilState = NULL,
+    .pColorBlendState = &color_blend_state,
+    .pDynamicState = &dynamic_state,
+    .layout = s_pipeline_layout,
+    .renderPass = s_render_pass,
+    .subpass = 0,
+    .basePipelineHandle = VK_NULL_HANDLE,
+    .basePipelineIndex = 0,
+  };
+
+  const VkResult res = vkCreateGraphicsPipelines(s_device, NULL, 1,
+                                                 &info, NULL,
+                                                 &s_pipeline);
+  if (res != VK_SUCCESS)
+    fatal("failed to create Vulkan graphics pipeline: %d", res);
+  trace("Vulkan graphics pipeline created");
+}
 

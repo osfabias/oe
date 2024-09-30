@@ -43,12 +43,12 @@ void _log_init(void) {
   if (!s_logger)
     fatal("failed to create an Archivio logger instance");
 
-  info("logger initialized");
+  trace("logger initialized");
 }
 
 void _log_quit(void) {
   arch_logger_destroy(s_logger);
-  info("log terminated"); 
+  trace("log terminated"); 
 }
 
 void log_msg(log_level_t level, const char *msg, ...) {
