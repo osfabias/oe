@@ -1,0 +1,6 @@
+[submodule "runtime/deps/opl"]
+	path = runtime/deps/opl
+	url = git@github.com:osfabias/opl.git
+[submodule "runtime/deps/archivio"]
+	path = runtime/deps/archivio
+	url = git@github.com:osfabias/archivio.git

@@ -1,0 +1,3 @@
+option(OE_SHARED "Builds oe as a shared library." OFF)
+
+option(OE_BUILD_EXAMPLE "Builds oe example program." ON)
