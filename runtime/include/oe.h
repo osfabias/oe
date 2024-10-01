@@ -9,6 +9,8 @@
 
 #include <stdlib.h> // exit()
 
+#define OE_NULL_HANDLE NULL
+
 // +------------------------------------------------------------------+
 // |                        initialization                            |
 // +------------------------------------------------------------------+
@@ -53,6 +55,18 @@ typedef struct color {
 } color_t;
 
 /**
+ * @brief Rectangle.
+ */
+typedef struct rect {
+  float x, y, width, height;
+} rect_t;
+
+/**
+ * @brief Texture handle.
+ */
+typedef struct texture* texture_t;
+
+/**
  * @brief Updates window state and starts frame drawing.
  *
  * @param color Clear color.
@@ -63,6 +77,28 @@ extern void draw_begin(color_t color);
  * @brief Ends frame drawing and presents drawn frame.
  */
 extern void draw_end(void);
+
+/**
+ * @brief Draw colored rectangle.
+ */
+extern void draw_rect(rect_t rect);
+
+/**
+ * @brief Loads texture.
+ *
+ * @param path The path to the texture file.
+ *
+ * @return Returns an oe texture handle on success, otherwise
+ *         returns OE_NULL_HANDLE.
+ */
+extern texture_t texture_load(const char *path);
+
+/**
+ * @brief Frees texture.
+ *
+ * @param texture The texture handle.
+ */
+extern void texture_free(texture_t texture);
 
 // +------------------------------------------------------------------+
 // |                            math                                  |
