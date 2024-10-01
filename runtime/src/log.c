@@ -16,7 +16,8 @@
 
 static arch_logger_t s_logger;
 
-void _log_init(void) {
+void _log_init(void)
+{
   const arch_logger_create_info_t arch_logger_create_info = {
     .path_fmt = "./logs/",
     .filename_fmt = "#d.#M.#y_#h:#m:#s.txt",
@@ -46,12 +47,14 @@ void _log_init(void) {
   trace("logger initialized");
 }
 
-void _log_quit(void) {
+void _log_quit(void)
+{
   arch_logger_destroy(s_logger);
   trace("log terminated"); 
 }
 
-void log_msg(log_level_t level, const char *msg, ...) {
+void log_msg(log_level_t level, const char *msg, ...)
+{
   assert(msg, "passed msg is a null pointer");
 
   va_list valist;

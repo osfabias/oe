@@ -5,7 +5,8 @@
 
 static opl_window_t s_window;
 
-void init(int width, int height, const char *title) {
+void init(i32 width, i32 height, const char *title)
+{
   _log_init();
 
   if (!opl_init())
@@ -22,12 +23,14 @@ void init(int width, int height, const char *title) {
   info("oe initialized");
 }
 
-int should_close(void) {
+i32 should_close(void)
+{
   opl_update();
   return opl_window_should_close(s_window);
 }
 
-void quit(void) {
+void quit(void)
+{
   _gfx_quit();
 
   opl_window_close(s_window);

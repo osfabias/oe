@@ -7,9 +7,24 @@
  */
 #pragma once
 
-#include <stdlib.h> // exit()
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
 
 #define OE_NULL_HANDLE NULL
+
+typedef uint8_t  u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+
+typedef int8_t  i8;
+typedef int16_t i16;
+typedef int32_t i32;
+typedef int64_t i64;
+
+typedef float  f32;
+typedef double f64;
 
 // +------------------------------------------------------------------+
 // |                        initialization                            |
@@ -25,7 +40,7 @@
  * @param heitgh The height of the window.
  * @param title  The title of the window.
  */
-extern void init(int width, int height, const char *title);
+extern void init(i32 width, i32 height, const char *title);
 
 /**
  * @brief Terminares oe.
@@ -41,7 +56,7 @@ extern void quit(void);
  * @return Returns 1 if the os requested app termination, otherwise
  *         return 0.
  */
-extern int should_close(void);
+extern i32 should_close(void);
 
 // +------------------------------------------------------------------+
 // |                          drawing                                 |
@@ -50,16 +65,12 @@ extern int should_close(void);
 /**
  * @brief 32 bit color.
  */
-typedef struct color {
-  unsigned char r, g, b, a;
-} color_t;
+typedef u32 color_t;
 
 /**
  * @brief Rectangle.
  */
-typedef struct rect {
-  float x, y, width, height;
-} rect_t;
+typedef struct rect { f32 x, y, width, height; } rect_t;
 
 /**
  * @brief Texture handle.
@@ -81,7 +92,7 @@ extern void draw_end(void);
 /**
  * @brief Draw colored rectangle.
  */
-extern void draw_rect(rect_t rect);
+extern void draw_rect(rect_t rect, color_t color, f32 depth);
 
 /**
  * @brief Loads texture.
@@ -107,9 +118,12 @@ extern void texture_free(texture_t texture);
 /**
  * @brief 2 dimensional vector.
  */
-typedef struct vec2 {
-  float x, y;
-} vec2_t;
+typedef struct vec2 { f32 x, y; } vec2_t;
+
+/**
+ * @brief 2 dimensional vector.
+ */
+typedef struct vec3 { f32 x, y, z; } vec3_t;
 
 // +------------------------------------------------------------------+
 // |                         debugging                                |

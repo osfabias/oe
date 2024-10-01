@@ -14,9 +14,9 @@
 #include "oe.h"
 
 typedef struct vert {
-  vec2_t   pos;
-  struct { float r, g, b, a; } color;
-  vec2_t   tex_coord;
+  vec3_t  pos;
+  color_t color;
+  vec2_t  uv;
 } vert_t;
 
 /**

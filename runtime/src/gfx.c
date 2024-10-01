@@ -13,7 +13,7 @@
 #include "oe.h"
 #include "internal.h"
 
-#define MAX_FRAMES_COUNT 3
+#define MAX_FRAMES_COUNT     3
 #define RESERVED_VERTS_COUNT 1000
 
 #define CUR_GRAPHICS_CMDBUF \
@@ -59,40 +59,43 @@ static VkCommandPool s_command_pools[QUEUE_INDEX_MAX];
 static VkCommandBuffer s_cmdbufs[QUEUE_INDEX_MAX][MAX_FRAMES_COUNT];
 static VkBuffer s_vert_buf;
 static VkDeviceMemory s_vert_buf_mem;
+static vert_t s_verts[RESERVED_VERTS_COUNT];
+static i32 s_vert_count = 0;
 static VkBuffer s_ind_buf;
 static VkDeviceMemory s_ind_buf_mem;
 static VkSemaphore s_image_available_semaphores[MAX_FRAMES_COUNT];
 static VkSemaphore s_renderer_finished_semaphores[MAX_FRAMES_COUNT];
 static VkFence s_in_flight_fences[MAX_FRAMES_COUNT];
-static int s_cur_frame_ind = 0;
+static i32 s_cur_frame_ind = 0;
 static uint32_t s_cur_image_ind;
 
-static void _find_queue_families(void);
-static void _check_device_exts(void);
-static int _buf_create(VkBufferUsageFlags usage, VkDeviceSize size,
-                       VkBuffer *buf, VkDeviceMemory *mem);
-static void _buf_copy(VkBuffer src, VkBuffer dst, VkDeviceSize size);
-static void _fill_memory(const void *data, VkDeviceSize size, VkBuffer buf);
+inline static void _find_queue_families(void);
+inline static void _check_device_exts(void);
+inline static i32  _buf_create(VkBufferUsageFlags usage, VkDeviceSize size,
+                               VkBuffer *buf, VkDeviceMemory *mem);
+inline static void _buf_copy(VkBuffer src, VkBuffer dst, VkDeviceSize size);
+inline static void _fill_memory(const void *data, VkDeviceSize size, VkBuffer buf);
 
-static void _instance_create(void);
-static void _select_gpu(void);
-static void _device_create(void);
-static void _obtain_queues(void);
-static void _surface_create(opl_window_t window);
-static void _swapchain_create(VkSwapchainKHR old_swapchain);
-static void _swapchain_get_images(void);
-static void _swapchain_image_views_create(void);
-static void _render_pass_create(void);
-static void _pipeline_layout_create(void);
-static void _pipeline_create(void);
-static void _framebufs_create(void);
-static void _command_pools_create(void);
-static void _command_bufs_create(void);
-static void _vert_buf_create(void);
-static void _ind_buf_create(void);
-static void _sync_objects_create(void);
+inline static void _instance_create(void);
+inline static void _select_gpu(void);
+inline static void _device_create(void);
+inline static void _obtain_queues(void);
+inline static void _surface_create(opl_window_t window);
+inline static void _swapchain_create(VkSwapchainKHR old_swapchain);
+inline static void _swapchain_get_images(void);
+inline static void _swapchain_image_views_create(void);
+inline static void _render_pass_create(void);
+inline static void _pipeline_layout_create(void);
+inline static void _pipeline_create(void);
+inline static void _framebufs_create(void);
+inline static void _command_pools_create(void);
+inline static void _command_bufs_create(void);
+inline static void _vert_buf_create(void);
+inline static void _ind_buf_create(void);
+inline static void _sync_objects_create(void);
 
-void _gfx_init(opl_window_t window) {
+void _gfx_init(opl_window_t window)
+{
   _instance_create();
   _select_gpu();
   _surface_create(window);
@@ -114,20 +117,10 @@ void _gfx_init(opl_window_t window) {
   _sync_objects_create();
 
   trace("gfx initialized");
-
-  const vert_t verts[4] = {
-    { { -0.5f, -0.5f }, {1.0f, 0.0f, 0.0f, 1.0f}, { 0.0f, 0.0f } },
-    { {  0.5f, -0.5f }, {0.0f, 1.0f, 0.0f, 1.0f}, { 1.0f, 0.0f } },
-    { {  0.5f,  0.5f }, {0.0f, 0.0f, 1.0f, 1.0f}, { 1.0f, 1.0f } },
-    { { -0.5f,  0.5f }, {1.0f, 1.0f, 1.0f, 0.0f}, { 0.0f, 1.0f } },
-  };
-  _fill_memory(verts, sizeof(verts), s_vert_buf);
-
-  const uint16_t inds[6] = { 0, 1, 2, 2, 3, 0 };
-  _fill_memory(inds, sizeof(inds), s_ind_buf);
 }
 
-void _gfx_quit(void) {
+void _gfx_quit(void)
+{
   vkDeviceWaitIdle(s_device);
 
   trace("destroying Vulkan objects...");
@@ -148,7 +141,7 @@ void _gfx_quit(void) {
   vkFreeMemory(s_device, s_vert_buf_mem, NULL);
   vkDestroyBuffer(s_device, s_vert_buf, NULL);
 
-  for (int i = 0; i < QUEUE_INDEX_MAX; ++i)
+  for (i32 i = 0; i < QUEUE_INDEX_MAX; ++i)
     vkDestroyCommandPool(s_device, s_command_pools[i], NULL);
 
   for (uint32_t i = 0; i < s_frames_count; ++i)
@@ -169,14 +162,15 @@ void _gfx_quit(void) {
   trace("gfx terminated");
 }
 
-void _find_queue_families(void) {
+void _find_queue_families(void)
+{
   uint32_t count;
   vkGetPhysicalDeviceQueueFamilyProperties(s_gpu, &count, NULL);
 
   VkQueueFamilyProperties props[count];
   vkGetPhysicalDeviceQueueFamilyProperties(s_gpu, &count, props);
 
-  for (int i = 0; i < QUEUE_INDEX_MAX; ++i)
+  for (i32 i = 0; i < QUEUE_INDEX_MAX; ++i)
     s_queue_families[i] = UINT32_MAX;
 
   for (uint32_t i = 0; i < count; ++i) {
@@ -209,7 +203,7 @@ void _find_queue_families(void) {
       s_queue_families[QUEUE_INDEX_PRESENT] = i;
   }
 
-  for (int i = 0; i < QUEUE_INDEX_MAX; ++i) {
+  for (i32 i = 0; i < QUEUE_INDEX_MAX; ++i) {
     if (s_queue_families[i] == UINT32_MAX)
       fatal("failed to find %d queue family", i);
   }
@@ -222,15 +216,16 @@ void _find_queue_families(void) {
         s_queue_families[QUEUE_INDEX_PRESENT]);
 }
 
-void _check_device_exts(void) {
+void _check_device_exts(void)
+{
   uint32_t count;
   vkEnumerateDeviceExtensionProperties(s_gpu, NULL, &count, NULL);
 
   VkExtensionProperties props[count];
   vkEnumerateDeviceExtensionProperties(s_gpu, NULL, &count, props);
 
-  for (int i = 0; i < DEVICE_EXT_COUNT; ++i) {
-    int available = 0;
+  for (i32 i = 0; i < DEVICE_EXT_COUNT; ++i) {
+    i32 available = 0;
 
     for (uint32_t j = 0; j < count; ++j) {
       if (!strcmp(s_device_ext_names[i], props[j].extensionName)) {
@@ -245,8 +240,9 @@ void _check_device_exts(void) {
   }
 }
 
-int _buf_create(VkBufferUsageFlags usage, VkDeviceSize size,
-                VkBuffer *buf, VkDeviceMemory *mem) {
+i32 _buf_create(VkBufferUsageFlags usage, VkDeviceSize size,
+                VkBuffer *buf, VkDeviceMemory *mem)
+{
   // create buffer
   const VkBufferCreateInfo buf_info = {
     .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -314,7 +310,8 @@ int _buf_create(VkBufferUsageFlags usage, VkDeviceSize size,
   return 1;
 }
 
-void _buf_copy(VkBuffer src, VkBuffer dst, VkDeviceSize size) {
+void _buf_copy(VkBuffer src, VkBuffer dst, VkDeviceSize size)
+{
   const VkCommandBufferAllocateInfo cmd_buf_alloc_info = {
     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
     .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
@@ -355,7 +352,8 @@ void _buf_copy(VkBuffer src, VkBuffer dst, VkDeviceSize size) {
                        1, &cmd_buf);
 }
 
-void _fill_memory(const void *data, VkDeviceSize size, VkBuffer buf) {
+void _fill_memory(const void *data, VkDeviceSize size, VkBuffer buf)
+{
   VkBuffer staging_buf;
   VkDeviceMemory stagin_buf_mem;
 
@@ -373,7 +371,8 @@ void _fill_memory(const void *data, VkDeviceSize size, VkBuffer buf) {
   vkDestroyBuffer(s_device, staging_buf, NULL);
 }
 
-void _instance_create(void) {
+void _instance_create(void)
+{
   const VkApplicationInfo app_info = {
     .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
     .pNext = NULL,
@@ -393,7 +392,7 @@ void _instance_create(void) {
     .ppEnabledLayerNames = 0,
   };
 
-  int ext_count;
+  i32 ext_count;
   opl_vk_device_extensions(&ext_count, NULL);
 
   // +2 for the portability and debug extension names
@@ -438,7 +437,8 @@ void _instance_create(void) {
   trace("Vulkan instance created");
 }
 
-void _select_gpu(void) {
+void _select_gpu(void)
+{
   // TODO search for the best possible gpu
   uint32_t count = 1;
   vkEnumeratePhysicalDevices(s_instance, &count, &s_gpu);
@@ -448,12 +448,13 @@ void _select_gpu(void) {
   debug("gpu: %s", props.deviceName);
 }
 
-void _device_create(void) {
+void _device_create(void)
+{
   const float queue_priorities[] = { 1.0f };
 
   VkDeviceQueueCreateInfo queue_infos[QUEUE_INDEX_MAX];
 
-  for (int i = 0; i < QUEUE_INDEX_MAX; ++i) {
+  for (i32 i = 0; i < QUEUE_INDEX_MAX; ++i) {
     queue_infos[i] = (VkDeviceQueueCreateInfo){
       .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
       .flags = 0,
@@ -480,12 +481,14 @@ void _device_create(void) {
   trace("Vulkan device created");
 }
 
-void _obtain_queues(void) {
-  for (int i = 0; i < QUEUE_INDEX_MAX; ++i)
+void _obtain_queues(void)
+{
+  for (i32 i = 0; i < QUEUE_INDEX_MAX; ++i)
     vkGetDeviceQueue(s_device, s_queue_families[i], 0, &s_queues[i]);
 }
 
-void _surface_create(opl_window_t window) {
+void _surface_create(opl_window_t window)
+{
   const VkResult res = opl_vk_surface_create(window, s_instance, NULL,
                                              &s_surface);
   if (res != VK_SUCCESS)
@@ -493,7 +496,8 @@ void _surface_create(opl_window_t window) {
   trace("Vulkan surface created");
 }
 
-void _swapchain_create(VkSwapchainKHR old_swapchain) {
+void _swapchain_create(VkSwapchainKHR old_swapchain)
+{
   VkSurfaceCapabilitiesKHR capabs;
   vkGetPhysicalDeviceSurfaceCapabilitiesKHR(s_gpu, s_surface, &capabs);
 
@@ -564,14 +568,16 @@ void _swapchain_create(VkSwapchainKHR old_swapchain) {
         capabs.currentExtent.height);
 }
 
-void _swapchain_get_images(void) {
+void _swapchain_get_images(void)
+{
   vkGetSwapchainImagesKHR(s_device, s_swapchain, &s_frames_count,
                           s_swapchain_images);
   debug("obtained %u swapchain image%c", s_frames_count,
         s_frames_count > 1 ? 's' : '\0');
 }
 
-void _swapchain_image_views_create(void) {
+void _swapchain_image_views_create(void)
+{
   VkImageViewCreateInfo info = {
     .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
     .flags = 0,
@@ -605,7 +611,8 @@ void _swapchain_image_views_create(void) {
   trace("Vulkan swapchain image views created");
 }
 
-void _render_pass_create(void) {
+void _render_pass_create(void)
+{
   const VkAttachmentDescription attachment_desc = {
     .flags = 0,
     .format = VK_FORMAT_B8G8R8A8_SRGB,
@@ -664,7 +671,8 @@ void _render_pass_create(void) {
   trace("render pass created");
 }
 
-void _pipeline_layout_create(void) {
+void _pipeline_layout_create(void)
+{
   const VkPipelineLayoutCreateInfo info = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
     .flags = 0,
@@ -682,7 +690,8 @@ void _pipeline_layout_create(void) {
   trace("Vulkan pipeline layout created");
 }
 
-void _shader_module_create(const char *path, VkShaderModule *module) {
+void _shader_module_create(const char *path, VkShaderModule *module)
+{
   FILE *fd = fopen(path, "rb");
   if (!fd)
     fatal("failed to open %s file", path);
@@ -710,7 +719,8 @@ void _shader_module_create(const char *path, VkShaderModule *module) {
   trace("Vulkan shader module created: %s", path);
 }
 
-void _pipeline_create(void) {
+void _pipeline_create(void)
+{
   VkShaderModule vert_shader, frag_shader;
 
   _shader_module_create("shaders/main-vert.spv", &vert_shader);
@@ -741,20 +751,20 @@ void _pipeline_create(void) {
     { // position
       .binding = 0,
       .location = 0,
-      .format = VK_FORMAT_R32G32_SFLOAT,
+      .format = VK_FORMAT_R32G32B32_SFLOAT,
       .offset = 0,
     },
     { // color
       .binding = 0,
       .location = 1,
-      .format = VK_FORMAT_R32G32B32A32_SFLOAT,
+      .format = VK_FORMAT_R8G8B8A8_UNORM,
       .offset = offsetof(vert_t, color),
     },
     { // texture coordinates
       .binding = 0,
       .location = 2,
       .format = VK_FORMAT_R32G32_SFLOAT,
-      .offset = offsetof(vert_t, tex_coord),
+      .offset = offsetof(vert_t, uv),
     },
   };
 
@@ -911,7 +921,8 @@ void _pipeline_create(void) {
   trace("Vulkan graphics pipeline created");
 }
 
-void _framebufs_create(void) {
+void _framebufs_create(void)
+{
   VkSurfaceCapabilitiesKHR swapchain_capabs;
   vkGetPhysicalDeviceSurfaceCapabilitiesKHR(s_gpu, s_surface,
                                             &swapchain_capabs);
@@ -939,14 +950,15 @@ void _framebufs_create(void) {
   trace("Vulkan framebuffer created");
 }
 
-void _command_pools_create(void) {
+void _command_pools_create(void)
+{
   VkCommandPoolCreateInfo info = {
     .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
     .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
     .pNext = NULL,
   };
 
-  for (int i = 0; i < QUEUE_INDEX_MAX; ++i) {
+  for (i32 i = 0; i < QUEUE_INDEX_MAX; ++i) {
     info.queueFamilyIndex = s_queue_families[i];
 
     const VkResult res = vkCreateCommandPool(
@@ -958,7 +970,8 @@ void _command_pools_create(void) {
   trace("Vulkan command pools created");
 }
 
-void _command_bufs_create(void) {
+void _command_bufs_create(void)
+{
   VkCommandBufferAllocateInfo info = {
     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
     .pNext = NULL,
@@ -966,7 +979,7 @@ void _command_bufs_create(void) {
     .commandBufferCount = s_frames_count,
   };
 
-  for (int i = 0; i < QUEUE_INDEX_MAX; ++i) {
+  for (i32 i = 0; i < QUEUE_INDEX_MAX; ++i) {
     info.commandPool = s_command_pools[i];
 
     const VkResult res = vkAllocateCommandBuffers(s_device, &info,
@@ -977,27 +990,26 @@ void _command_bufs_create(void) {
   trace("Vulkan command buffers allocated");
 }
 
-void _vert_buf_create(void) {
-  if (
-    !_buf_create(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+void _vert_buf_create(void)
+{
+  if (!_buf_create(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                  sizeof(vert_t) * RESERVED_VERTS_COUNT,
-                 &s_vert_buf, &s_vert_buf_mem)
-  )
+                 &s_vert_buf, &s_vert_buf_mem))
     fatal("failed to create buffer");
   trace("Vulkan vertex buffer created");
 }
 
-void _ind_buf_create(void) {
-  if (
-    !_buf_create(VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                 sizeof(uint16_t) * RESERVED_VERTS_COUNT,
-                 &s_ind_buf, &s_ind_buf_mem)
-  )
+void _ind_buf_create(void)
+{
+  if (!_buf_create(VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                   sizeof(uint16_t) * RESERVED_VERTS_COUNT,
+                   &s_ind_buf, &s_ind_buf_mem))
     fatal("failed to create buffer");
   trace("Vulkan index buffer created");
 }
 
-void _sync_objects_create(void) {
+void _sync_objects_create(void)
+{
   const VkSemaphoreCreateInfo semaphore_info = {
     .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
     .flags = 0,
@@ -1029,7 +1041,8 @@ void _sync_objects_create(void) {
   trace("Vulkan sync objects created");
 }
 
-void draw_begin(color_t color) {
+void draw_begin(color_t color)
+{
   vkWaitForFences(s_device, 1, &s_in_flight_fences[s_cur_frame_ind],
                   VK_TRUE, UINT64_MAX);
   vkResetFences(s_device, 1, &s_in_flight_fences[s_cur_frame_ind]);
@@ -1050,10 +1063,12 @@ void draw_begin(color_t color) {
   vkBeginCommandBuffer(CUR_GRAPHICS_CMDBUF, &cmdbuf_begin_info);
 
   const VkClearValue clear_color = {
-    .color = {
-      { color.r / 255.0f, color.g / 255.0f,
-        color.b / 255.0f, color.a / 255.0f }
-    }
+    .color = {{
+      (color >> 24) / 255.0f,
+      (color >> 16 & 0xff) / 255.0f,
+      (color >> 8 & 0xff) / 255.0f,
+      (color & 0xff) / 255.0f
+    }}
   };
 
   const VkRenderPassBeginInfo render_pass_begin_info = {
@@ -1092,17 +1107,40 @@ void draw_begin(color_t color) {
   vkCmdSetScissor(CUR_GRAPHICS_CMDBUF, 0, 1, &scissor);
 }
 
-void draw_end(void) {
-  //-------------debug-------------//
-  static const VkDeviceSize offsets[1] = { 0 };
+static void _batch(void)
+{
+  _fill_memory(s_verts, sizeof(vert_t) * s_vert_count, s_vert_buf);
 
+  const i32 ind_count = s_vert_count * 1.5f;
+  uint16_t inds[ind_count];
+
+  for (i32 i = 0; i < ind_count / 6; ++i) {
+    inds[i * 6 + 0] = i * 4 + 0;
+    inds[i * 6 + 1] = i * 4 + 1;
+    inds[i * 6 + 2] = i * 4 + 2;
+    inds[i * 6 + 3] = i * 4 + 2;
+    inds[i * 6 + 4] = i * 4 + 3;
+    inds[i * 6 + 5] = i * 4 + 0;
+  }
+
+
+  _fill_memory(inds, sizeof(inds), s_ind_buf);
+}
+
+void draw_end(void)
+{
+  _batch();
+
+  static const VkDeviceSize offsets[1] = { 0 };
   vkCmdBindVertexBuffers(CUR_GRAPHICS_CMDBUF, 0, 1, &s_vert_buf, offsets);
+
   vkCmdBindIndexBuffer(CUR_GRAPHICS_CMDBUF, s_ind_buf, 0,
                        VK_INDEX_TYPE_UINT16);
 
-  vkCmdDrawIndexed(CUR_GRAPHICS_CMDBUF, 6, 1, 0, 0, 0);
+  vkCmdDrawIndexed(CUR_GRAPHICS_CMDBUF, s_vert_count * 1.5f, 1, 0, 0, 0);
 
-  //-------------------------------//
+  s_vert_count = 0;
+
   vkCmdEndRenderPass(CUR_GRAPHICS_CMDBUF);
 
   vkEndCommandBuffer(CUR_GRAPHICS_CMDBUF);
@@ -1143,5 +1181,35 @@ void draw_end(void) {
   vkQueuePresentKHR(s_queues[QUEUE_INDEX_PRESENT], &present_info);
 
   s_cur_frame_ind = (s_cur_frame_ind + 1) % s_frames_count;
+}
+
+void draw_rect(rect_t rect, color_t color, f32 depth)
+{
+  assert(s_vert_count < RESERVED_VERTS_COUNT,
+         "verts number exceeds the limit");
+
+  s_verts[s_vert_count++] = (vert_t){
+    .pos   = { rect.x, rect.y, depth },
+    .color = color,
+    .uv    = { 0.0f, 0.0f }
+  };
+
+  s_verts[s_vert_count++] = (vert_t){
+    .pos   = { rect.x + rect.width, rect.y, depth },
+    .color = color,
+    .uv    = { 0.0f, 0.0f }
+  };
+
+  s_verts[s_vert_count++] = (vert_t){
+    .pos   = { rect.x + rect.width, rect.y + rect.height, depth },
+    .color = color,
+    .uv    = { 0.0f, 0.0f }
+  };
+
+  s_verts[s_vert_count++] = (vert_t){
+    .pos   = { rect.x , rect.y + rect.height, depth },
+    .color = color,
+    .uv    = { 0.0f, 0.0f }
+  };
 }
 
