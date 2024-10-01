@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <limits.h>
+#include <sys/types.h>
 
 #define OPL_INCLUDE_VULKAN
 #include <opl.h>
@@ -13,13 +14,17 @@
 #include "oe.h"
 #include "internal.h"
 
-#define MAX_SWAPCHAIN_IMAGES_COUNT 3
+#define MAX_FRAMES_COUNT 3
 
 #define CUR_GRAPHICS_CMDBUF \
   s_cmdbufs[QUEUE_INDEX_GRAPHICS][s_cur_frame_ind]
 
+#define CUR_TRANSFER_CMDBUF \
+  s_cmdbufs[QUEUE_INDEX_TRANSFER][s_cur_frame_ind]
+
 enum queue_index {
   QUEUE_INDEX_GRAPHICS,
+  QUEUE_INDEX_TRANSFER,
   QUEUE_INDEX_PRESENT,
   QUEUE_INDEX_MAX
 };
@@ -44,19 +49,18 @@ static VkSurfaceKHR s_surface;
 static uint32_t s_frames_count;
 static VkSwapchainKHR s_swapchain;
 static VkExtent2D s_swapchain_extent;
-static VkImage s_swapchain_images[MAX_SWAPCHAIN_IMAGES_COUNT];
-static VkImageView s_swapchain_views[MAX_SWAPCHAIN_IMAGES_COUNT];
+static VkImage s_swapchain_images[MAX_FRAMES_COUNT];
+static VkImageView s_swapchain_views[MAX_FRAMES_COUNT];
 static VkRenderPass s_render_pass;
 static VkPipelineLayout s_pipeline_layout;
 static VkPipeline s_pipeline;
-static VkFramebuffer s_framebufs[MAX_SWAPCHAIN_IMAGES_COUNT];
+static VkFramebuffer s_framebufs[MAX_FRAMES_COUNT];
 static VkCommandPool s_command_pools[QUEUE_INDEX_MAX];
-
-
-static VkCommandBuffer
-  s_cmdbufs[QUEUE_INDEX_MAX][MAX_SWAPCHAIN_IMAGES_COUNT];
-
-static int s_cur_frame_ind;
+static VkCommandBuffer s_cmdbufs[QUEUE_INDEX_MAX][MAX_FRAMES_COUNT];
+static VkSemaphore s_image_available_semaphores[MAX_FRAMES_COUNT];
+static VkSemaphore s_renderer_finished_semaphores[MAX_FRAMES_COUNT];
+static VkFence s_in_flight_fences[MAX_FRAMES_COUNT];
+static int s_cur_frame_ind = 0;
 static uint32_t s_cur_image_ind;
 
 static void _find_queue_families(void);
@@ -76,6 +80,7 @@ static void _pipeline_create(void);
 static void _framebufs_create(void);
 static void _command_pools_create(void);
 static void _command_bufs_create(void);
+static void _sync_objects_create(void);
 
 void _gfx_init(opl_window_t window) {
   _instance_create();
@@ -94,12 +99,25 @@ void _gfx_init(opl_window_t window) {
   _framebufs_create();
   _command_pools_create();
   _command_bufs_create();
+  _sync_objects_create();
 
   trace("gfx initialized");
 }
 
 void _gfx_quit(void) {
+  vkDeviceWaitIdle(s_device);
+
   trace("destroying Vulkan objects...");
+
+  for (uint32_t i = 0; i < s_frames_count; ++i) {
+    vkDestroyFence(s_device, s_in_flight_fences[i], NULL);
+
+    vkDestroySemaphore(s_device, s_renderer_finished_semaphores[i],
+                       NULL);
+
+    vkDestroySemaphore(s_device, s_image_available_semaphores[i],
+                       NULL);
+  }
 
   for (int i = 0; i < QUEUE_INDEX_MAX; ++i)
     vkDestroyCommandPool(s_device, s_command_pools[i], NULL);
@@ -142,6 +160,15 @@ void _find_queue_families(void) {
       continue;
     }
 
+    // transfer family
+    if (
+      s_queue_families[QUEUE_INDEX_TRANSFER] == UINT32_MAX &&
+      props[i].queueFlags & VK_QUEUE_TRANSFER_BIT
+    ) {
+      s_queue_families[QUEUE_INDEX_TRANSFER] = i;
+      continue;
+    }
+
     // present family
     VkBool32 support_present = 0;
     vkGetPhysicalDeviceSurfaceSupportKHR(s_gpu, i, s_surface,
@@ -157,8 +184,12 @@ void _find_queue_families(void) {
     if (s_queue_families[i] == UINT32_MAX)
       fatal("failed to find %d queue family", i);
   }
-  debug("queue families:\n" "\tgraphics: %u\n" "\tpresent: %u",
+  debug("queue families:\n"
+        "\tgraphics: %u\n"
+        "\ttranfser: %u\n"
+        "\tpresent: %u",
         s_queue_families[QUEUE_INDEX_GRAPHICS],
+        s_queue_families[QUEUE_INDEX_TRANSFER],
         s_queue_families[QUEUE_INDEX_PRESENT]);
 }
 
@@ -263,7 +294,7 @@ void _select_gpu(void) {
 void _device_create(void) {
   const float queue_priorities[] = { 1.0f };
 
-  VkDeviceQueueCreateInfo queue_infos[2];
+  VkDeviceQueueCreateInfo queue_infos[QUEUE_INDEX_MAX];
 
   for (int i = 0; i < QUEUE_INDEX_MAX; ++i) {
     queue_infos[i] = (VkDeviceQueueCreateInfo){
@@ -282,7 +313,7 @@ void _device_create(void) {
     .pNext = NULL,
     .enabledExtensionCount = DEVICE_EXT_COUNT,
     .ppEnabledExtensionNames = s_device_ext_names,
-    .queueCreateInfoCount = 2,
+    .queueCreateInfoCount = QUEUE_INDEX_MAX,
     .pQueueCreateInfos = queue_infos,
   };
 
@@ -309,6 +340,11 @@ void _swapchain_create(VkSwapchainKHR old_swapchain) {
   VkSurfaceCapabilitiesKHR capabs;
   vkGetPhysicalDeviceSurfaceCapabilitiesKHR(s_gpu, s_surface, &capabs);
 
+  assert(
+    capabs.minImageCount <= MAX_FRAMES_COUNT,
+    "minimal image count for the surface is %u, which is bigger than"
+    "MAX_FRAMES_COUNT macro", capabs.minImageCount
+  );
   s_swapchain_extent = capabs.currentExtent;
 
   VkSwapchainCreateInfoKHR info = {
@@ -417,7 +453,7 @@ void _render_pass_create(void) {
     .flags = 0,
     .format = VK_FORMAT_B8G8R8A8_SRGB,
     .samples = VK_SAMPLE_COUNT_1_BIT,
-    .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
     .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
@@ -443,14 +479,23 @@ void _render_pass_create(void) {
     .pPreserveAttachments = NULL,
   };
 
+  const VkSubpassDependency dependency = {
+    .srcSubpass = VK_SUBPASS_EXTERNAL,
+    .dstSubpass = 0,
+    .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    .srcAccessMask = 0,
+    .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+    .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+  };
+
   const VkRenderPassCreateInfo info = {
     .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
     .flags = 0,
     .pNext = NULL,
     .attachmentCount = 1,
     .pAttachments = &attachment_desc,
-    .dependencyCount = 0,
-    .pDependencies = NULL,
+    .dependencyCount = 1,
+    .pDependencies = &dependency,
     .subpassCount = 1,
     .pSubpasses = &subpass_desc,
   };
@@ -740,11 +785,13 @@ void _framebufs_create(void) {
 void _command_pools_create(void) {
   VkCommandPoolCreateInfo info = {
     .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-    .flags = 0,
+    .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
     .pNext = NULL,
   };
 
   for (int i = 0; i < QUEUE_INDEX_MAX; ++i) {
+    info.queueFamilyIndex = s_queue_families[i];
+
     const VkResult res = vkCreateCommandPool(
       s_device, &info, NULL, &s_command_pools[i]);
 
@@ -773,10 +820,48 @@ void _command_bufs_create(void) {
   trace("Vulkan command buffers allocated");
 }
 
-void draw_begin(void) {
+void _sync_objects_create(void) {
+  const VkSemaphoreCreateInfo semaphore_info = {
+    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+  };
+
+  const VkFenceCreateInfo fence_info = {
+    .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+    .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+    .pNext = NULL,
+  };
+
+  for (uint32_t i = 0; i < s_frames_count; ++i) {
+    VkResult res1 = vkCreateSemaphore(
+      s_device, &semaphore_info, NULL,
+      &s_image_available_semaphores[i]);
+
+    VkResult res2 = vkCreateSemaphore(
+      s_device, &semaphore_info, NULL, 
+      &s_renderer_finished_semaphores[i]);
+
+    VkResult res3 = vkCreateFence(s_device, &fence_info, NULL,
+                                  &s_in_flight_fences[i]);
+
+    if (res1 != VK_SUCCESS || res2 != VK_SUCCESS || res3 != VK_SUCCESS)
+      fatal("failed to create sync objecsts: %d;%d;%d",
+            res1, res2, res3);
+  }
+  trace("Vulkan sync objects created");
+}
+
+void draw_begin(color_t color) {
+  vkWaitForFences(s_device, 1, &s_in_flight_fences[s_cur_frame_ind],
+                  VK_TRUE, UINT64_MAX);
+  vkResetFences(s_device, 1, &s_in_flight_fences[s_cur_frame_ind]);
+
   vkAcquireNextImageKHR(s_device, s_swapchain, UINT64_MAX,
-                        VK_NULL_HANDLE, VK_NULL_HANDLE,
-                        &s_cur_image_ind);
+                        s_image_available_semaphores[s_cur_frame_ind],
+                        VK_NULL_HANDLE, &s_cur_image_ind);
+
+  vkResetCommandBuffer(CUR_GRAPHICS_CMDBUF, 0 /* reset flags */);
 
   static const VkCommandBufferBeginInfo cmdbuf_begin_info = {
     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -787,6 +872,13 @@ void draw_begin(void) {
 
   vkBeginCommandBuffer(CUR_GRAPHICS_CMDBUF, &cmdbuf_begin_info);
 
+  const VkClearValue clear_color = {
+    .color = {
+      { color.r / 255.0f, color.g / 255.0f,
+        color.b / 255.0f, color.a / 255.0f }
+    }
+  };
+
   const VkRenderPassBeginInfo render_pass_begin_info = {
     .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
     .pNext = NULL,
@@ -796,8 +888,8 @@ void draw_begin(void) {
       .offset = { 0.0f, 0.0f },
       .extent = s_swapchain_extent,
     },
-    .clearValueCount = 0,
-    // .pClearValues
+    .clearValueCount = 1,
+    .pClearValues = &clear_color,
   };
 
   vkCmdBeginRenderPass(CUR_GRAPHICS_CMDBUF, &render_pass_begin_info, 
@@ -828,27 +920,34 @@ void draw_end(void) {
 
   vkEndCommandBuffer(CUR_GRAPHICS_CMDBUF);
 
+  static const VkPipelineStageFlags wait_stages[] = {
+    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+  };
+
   const VkSubmitInfo submit_info = {
     .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
     .pNext = NULL,
     .commandBufferCount = 1,
     .pCommandBuffers = &CUR_GRAPHICS_CMDBUF,
-    .waitSemaphoreCount = 0,
-    // .pWaitSemaphores
-    .signalSemaphoreCount = 0,
-    // .pSignalSemaphores
+    .waitSemaphoreCount = 1,
+    .pWaitSemaphores = &s_image_available_semaphores[s_cur_frame_ind],
+    .pWaitDstStageMask = wait_stages,
+    .signalSemaphoreCount = 1,
+    .pSignalSemaphores = &s_renderer_finished_semaphores[s_cur_frame_ind]
   };
 
-  const VkResult res = vkQueueSubmit(s_queues[QUEUE_INDEX_GRAPHICS], 1, 
-                                     &submit_info, VK_NULL_HANDLE);
+  const VkResult res = vkQueueSubmit(
+    s_queues[QUEUE_INDEX_GRAPHICS], 1, &submit_info,
+    s_in_flight_fences[s_cur_frame_ind]);
+
   if (res != VK_SUCCESS)
     fatal("failed to submit queue: %d", res);
 
   const VkPresentInfoKHR present_info = {
     .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
     .pNext = NULL,
-    .waitSemaphoreCount = 0,
-    // .pWaitSemaphores
+    .waitSemaphoreCount = 1,
+    .pWaitSemaphores = &s_renderer_finished_semaphores[s_cur_frame_ind],
     .swapchainCount = 1,
     .pSwapchains = &s_swapchain,
     .pImageIndices = &s_cur_image_ind,

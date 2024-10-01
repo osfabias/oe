@@ -54,8 +54,10 @@ typedef struct color {
 
 /**
  * @brief Updates window state and starts frame drawing.
+ *
+ * @param color Clear color.
  */
-extern void draw_begin(void);
+extern void draw_begin(color_t color);
 
 /**
  * @brief Ends frame drawing and presents drawn frame.
