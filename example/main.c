@@ -15,15 +15,17 @@ int main(void)
       s = time(NULL);
 
     draw_begin(0x292831ff);
-      draw_rect(
-        (rect_t){ -0.8f, -0.8f + t, 1.2f + t, 1.7f },
-        0xee8695ff, 0.0f
-      );
-
-      draw_rect(
-        (rect_t){ 0.0f - t, 0.0f + t, 0.8f, 0.2f },
-        0x4a7a96ff, 1.0f
-      );
+      for (int i = 0; i < 1000; ++i) {
+        draw_rect(
+          (rect_t){
+            -0.8f + (i % 75) / 75.0f,
+            -0.8f + t + i / 600.0f,
+            .05f,
+            .05f
+          },
+          0xee8695ff, 0.0f
+        );
+      }
     draw_end();
   }
 

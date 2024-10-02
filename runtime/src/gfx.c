@@ -14,7 +14,7 @@
 #include "internal.h"
 
 #define MAX_FRAMES_COUNT     3
-#define RESERVED_VERTS_COUNT 1000
+#define RESERVED_VERTS_COUNT 4000
 
 #define CUR_GRAPHICS_CMDBUF \
   s_cmdbufs[QUEUE_INDEX_GRAPHICS][s_cur_frame_ind]
