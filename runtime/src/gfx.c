@@ -6,6 +6,7 @@
 
 #define OPL_INCLUDE_VULKAN
 #include <opl.h>
+#include <stb_image.h>
 
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_core.h>
@@ -14,13 +15,18 @@
 #include "internal.h"
 
 #define MAX_FRAMES_COUNT     3
-#define RESERVED_VERTS_COUNT 4000
+#define RESERVED_VERTS_COUNT 64000
 
 #define CUR_GRAPHICS_CMDBUF \
   s_cmdbufs[QUEUE_INDEX_GRAPHICS][s_cur_frame_ind]
 
 #define CUR_TRANSFER_CMDBUF \
   s_cmdbufs[QUEUE_INDEX_TRANSFER][s_cur_frame_ind]
+
+struct texture {
+  int width, height;
+  stbi_uc *pixels;
+};
 
 enum queue_index {
   QUEUE_INDEX_GRAPHICS,
@@ -52,6 +58,9 @@ static VkExtent2D s_swapchain_extent;
 static VkImage s_swapchain_images[MAX_FRAMES_COUNT];
 static VkImageView s_swapchain_views[MAX_FRAMES_COUNT];
 static VkRenderPass s_render_pass;
+static VkDescriptorSetLayout s_descriptor_set_layout;
+static VkDescriptorPool s_descriptor_pool;
+static VkDescriptorSet s_descriptor_sets[MAX_FRAMES_COUNT];
 static VkPipelineLayout s_pipeline_layout;
 static VkPipeline s_pipeline;
 static VkFramebuffer s_framebufs[MAX_FRAMES_COUNT];
@@ -59,10 +68,12 @@ static VkCommandPool s_command_pools[QUEUE_INDEX_MAX];
 static VkCommandBuffer s_cmdbufs[QUEUE_INDEX_MAX][MAX_FRAMES_COUNT];
 static VkBuffer s_vert_buf;
 static VkDeviceMemory s_vert_buf_mem;
-static vert_t s_verts[RESERVED_VERTS_COUNT];
+static _vert_t s_verts[RESERVED_VERTS_COUNT];
 static i32 s_vert_count = 0;
 static VkBuffer s_ind_buf;
 static VkDeviceMemory s_ind_buf_mem;
+static VkBuffer s_ubufs[MAX_FRAMES_COUNT];
+static VkDeviceMemory s_ubuf_mems[MAX_FRAMES_COUNT];
 static VkSemaphore s_image_available_semaphores[MAX_FRAMES_COUNT];
 static VkSemaphore s_renderer_finished_semaphores[MAX_FRAMES_COUNT];
 static VkFence s_in_flight_fences[MAX_FRAMES_COUNT];
@@ -85,13 +96,17 @@ inline static void _swapchain_create(VkSwapchainKHR old_swapchain);
 inline static void _swapchain_get_images(void);
 inline static void _swapchain_image_views_create(void);
 inline static void _render_pass_create(void);
+inline static void _descriptor_set_layout_create(void);
+inline static void _descriptor_pool_create(void);
+inline static void _descriptor_sets_allocate(void);
 inline static void _pipeline_layout_create(void);
 inline static void _pipeline_create(void);
 inline static void _framebufs_create(void);
 inline static void _command_pools_create(void);
-inline static void _command_bufs_create(void);
+inline static void _cmdbufs_allocate(void);
 inline static void _vert_buf_create(void);
 inline static void _ind_buf_create(void);
+inline static void _uniform_buf_create(void);
 inline static void _sync_objects_create(void);
 
 void _gfx_init(opl_window_t window)
@@ -107,13 +122,17 @@ void _gfx_init(opl_window_t window)
   _swapchain_get_images();
   _swapchain_image_views_create();
   _render_pass_create();
+  _descriptor_set_layout_create();
+  _descriptor_pool_create();
+  _descriptor_sets_allocate();
   _pipeline_layout_create();
   _pipeline_create();
   _framebufs_create();
   _command_pools_create();
-  _command_bufs_create();
+  _cmdbufs_allocate();
   _vert_buf_create();
   _ind_buf_create();
+  _uniform_buf_create();
   _sync_objects_create();
 
   trace("gfx initialized");
@@ -125,6 +144,7 @@ void _gfx_quit(void)
 
   trace("destroying Vulkan objects...");
 
+  // sync objects
   for (uint32_t i = 0; i < s_frames_count; ++i) {
     vkDestroyFence(s_device, s_in_flight_fences[i], NULL);
 
@@ -135,26 +155,45 @@ void _gfx_quit(void)
                        NULL);
   }
 
+  // uniform buffers
+  for (uint32_t i = 0; i < s_frames_count; ++i) {
+    vkFreeMemory(s_device, s_ubuf_mems[i], NULL);
+    vkDestroyBuffer(s_device, s_ubufs[i], NULL);
+  }
+
+  // index buffer
   vkFreeMemory(s_device, s_ind_buf_mem, NULL);
   vkDestroyBuffer(s_device, s_ind_buf, NULL);
 
+  // vertex buffer
   vkFreeMemory(s_device, s_vert_buf_mem, NULL);
   vkDestroyBuffer(s_device, s_vert_buf, NULL);
 
+  // command pools
   for (i32 i = 0; i < QUEUE_INDEX_MAX; ++i)
     vkDestroyCommandPool(s_device, s_command_pools[i], NULL);
 
+  // framebufs
   for (uint32_t i = 0; i < s_frames_count; ++i)
     vkDestroyFramebuffer(s_device, s_framebufs[i], NULL);
 
+  // graphics pipeline
   vkDestroyPipeline(s_device, s_pipeline, NULL);
   vkDestroyPipelineLayout(s_device, s_pipeline_layout, NULL);
+
+  // descriptor sets
+  // NOTE: sets freed automatically
+  vkDestroyDescriptorPool(s_device, s_descriptor_pool, NULL);
+  vkDestroyDescriptorSetLayout(s_device, s_descriptor_set_layout, NULL);
+
   vkDestroyRenderPass(s_device, s_render_pass, NULL);
 
+  // swapchain
   for (uint32_t i = 0; i < s_frames_count; ++i)
     vkDestroyImageView(s_device, s_swapchain_views[i], NULL);
-
   vkDestroySwapchainKHR(s_device, s_swapchain, NULL);
+
+  // main objects
   vkDestroyDevice(s_device, NULL);
   vkDestroySurfaceKHR(s_instance, s_surface, NULL);
   vkDestroyInstance(s_instance, NULL);
@@ -671,14 +710,95 @@ void _render_pass_create(void)
   trace("render pass created");
 }
 
+void _descriptor_set_layout_create(void) {
+  const VkDescriptorSetLayoutBinding bindings[2] = {
+    {
+      .binding = 0,
+      .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+      .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+      .descriptorCount = 1,
+      .pImmutableSamplers = NULL, // optional
+    },
+    {
+      .binding = 1,
+      .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+      .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+      .descriptorCount = 1,
+      .pImmutableSamplers = NULL, // optional
+    }
+  };
+
+  const VkDescriptorSetLayoutCreateInfo info = {
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .bindingCount = 2,
+    .pBindings = bindings,
+  };
+
+  const VkResult res = vkCreateDescriptorSetLayout(
+    s_device, &info, NULL, &s_descriptor_set_layout);
+  if (res != VK_SUCCESS)
+    fatal("failed to create descriptor set layout: %d", res);
+  trace("Vulkan descriptor set layout created");
+}
+
+void _descriptor_pool_create(void) {
+  const VkDescriptorPoolSize sizes[2] = {
+    {
+      .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+      .descriptorCount = s_frames_count
+    },
+    {
+      .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+      .descriptorCount = s_frames_count
+    }
+  };
+
+  const VkDescriptorPoolCreateInfo info = {
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+    .flags = 0,
+    .pNext = NULL,
+    .maxSets = s_frames_count,
+    .poolSizeCount = 2,
+    .pPoolSizes = sizes
+  };
+
+  const VkResult res = vkCreateDescriptorPool(s_device, &info, NULL,
+                                              &s_descriptor_pool);
+  if (res != VK_SUCCESS)
+    fatal("failed to create Vulkan descriptor pool: %d", res);
+  trace("Vulkan descriptor pool created");
+}
+
+void _descriptor_sets_allocate(void) {
+  VkDescriptorSetLayout layouts[s_frames_count];
+  for (uint32_t i = 0; i < s_frames_count; ++i)
+    layouts[i] = s_descriptor_set_layout;
+
+  const VkDescriptorSetAllocateInfo info = {
+    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+    .pNext = NULL,
+    .descriptorSetCount = s_frames_count,
+    .pSetLayouts = layouts,
+    .descriptorPool = s_descriptor_pool
+  };
+
+  const VkResult res = vkAllocateDescriptorSets(s_device, &info,
+                                                s_descriptor_sets);
+  if (res != VK_SUCCESS)
+    fatal("failed to allocate Vulkan descriptor sets: %d", res);
+  trace("Vulkan desciprtor sets allocated");
+}
+
 void _pipeline_layout_create(void)
 {
   const VkPipelineLayoutCreateInfo info = {
     .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
     .flags = 0,
     .pNext = NULL,
-    .setLayoutCount = 0,
-    .pSetLayouts = NULL,
+    .setLayoutCount = 1,
+    .pSetLayouts = &s_descriptor_set_layout,
     .pushConstantRangeCount = 0,
     .pPushConstantRanges = NULL
   };
@@ -758,19 +878,19 @@ void _pipeline_create(void)
       .binding = 0,
       .location = 1,
       .format = VK_FORMAT_R8G8B8A8_UNORM,
-      .offset = offsetof(vert_t, color),
+      .offset = offsetof(_vert_t, color),
     },
     { // texture coordinates
       .binding = 0,
       .location = 2,
       .format = VK_FORMAT_R32G32_SFLOAT,
-      .offset = offsetof(vert_t, uv),
+      .offset = offsetof(_vert_t, uv),
     },
   };
 
   const VkVertexInputBindingDescription vert_input_bind_desc = {
     .binding = 0,
-    .stride = sizeof(vert_t),
+    .stride = sizeof(_vert_t),
     .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
   };
 
@@ -970,7 +1090,7 @@ void _command_pools_create(void)
   trace("Vulkan command pools created");
 }
 
-void _command_bufs_create(void)
+void _cmdbufs_allocate(void)
 {
   VkCommandBufferAllocateInfo info = {
     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -993,7 +1113,7 @@ void _command_bufs_create(void)
 void _vert_buf_create(void)
 {
   if (!_buf_create(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                 sizeof(vert_t) * RESERVED_VERTS_COUNT,
+                 sizeof(_vert_t) * RESERVED_VERTS_COUNT,
                  &s_vert_buf, &s_vert_buf_mem))
     fatal("failed to create buffer");
   trace("Vulkan vertex buffer created");
@@ -1006,6 +1126,40 @@ void _ind_buf_create(void)
                    &s_ind_buf, &s_ind_buf_mem))
     fatal("failed to create buffer");
   trace("Vulkan index buffer created");
+}
+
+void _uniform_buf_create(void) {
+  VkDescriptorBufferInfo buf_infos[s_frames_count];
+  VkWriteDescriptorSet writes[s_frames_count];
+
+  for (uint32_t i = 0; i < s_frames_count; ++i) {
+    if (!_buf_create(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, sizeof(_ubo_t),
+                     &s_ubufs[i], &s_ubuf_mems[i]))
+      fatal("failed to create Vulkan uniform buffer");
+
+    buf_infos[i] = (VkDescriptorBufferInfo){
+      .range = sizeof(_ubo_t),
+      .buffer = s_ubufs[i],
+      .offset = 0,
+    };
+
+    writes[i] = (VkWriteDescriptorSet){
+      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+      .pNext = NULL,
+      .dstSet = s_descriptor_sets[i],
+      .dstBinding = 0,
+      .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+      .descriptorCount = 1,
+      .dstArrayElement = 0,
+      .pBufferInfo = &buf_infos[i],
+      .pImageInfo = NULL,
+      .pTexelBufferView = NULL,
+    };
+  }
+
+  vkUpdateDescriptorSets(s_device, s_frames_count, writes, 0, NULL);
+
+  trace("Vulkan uniform buffers created");
 }
 
 void _sync_objects_create(void)
@@ -1023,16 +1177,17 @@ void _sync_objects_create(void)
   };
 
   for (uint32_t i = 0; i < s_frames_count; ++i) {
-    VkResult res1 = vkCreateSemaphore(
+    const VkResult res1 = vkCreateSemaphore(
       s_device, &semaphore_info, NULL,
       &s_image_available_semaphores[i]);
 
-    VkResult res2 = vkCreateSemaphore(
+    const VkResult res2 = vkCreateSemaphore(
       s_device, &semaphore_info, NULL, 
       &s_renderer_finished_semaphores[i]);
 
-    VkResult res3 = vkCreateFence(s_device, &fence_info, NULL,
-                                  &s_in_flight_fences[i]);
+    const VkResult res3 = vkCreateFence(
+      s_device, &fence_info, NULL,
+      &s_in_flight_fences[i]);
 
     if (res1 != VK_SUCCESS || res2 != VK_SUCCESS || res3 != VK_SUCCESS)
       fatal("failed to create sync objecsts: %d;%d;%d",
@@ -1105,16 +1260,18 @@ void draw_begin(color_t color)
     .extent = s_swapchain_extent,
   };
   vkCmdSetScissor(CUR_GRAPHICS_CMDBUF, 0, 1, &scissor);
+
 }
 
-static void _batch(void)
+void _batch(void)
 {
-  _fill_memory(s_verts, sizeof(vert_t) * s_vert_count, s_vert_buf);
+  _fill_memory(s_verts, sizeof(_vert_t) * s_vert_count, s_vert_buf);
 
   const i32 ind_count = s_vert_count * 1.5f;
   uint16_t inds[ind_count];
 
-  for (i32 i = 0; i < ind_count / 6; ++i) {
+  const i32 iters = ind_count / 6;
+  for (i32 i = 0; i < iters; ++i) {
     inds[i * 6 + 0] = i * 4 + 0;
     inds[i * 6 + 1] = i * 4 + 1;
     inds[i * 6 + 2] = i * 4 + 2;
@@ -1122,7 +1279,6 @@ static void _batch(void)
     inds[i * 6 + 4] = i * 4 + 3;
     inds[i * 6 + 5] = i * 4 + 0;
   }
-
 
   _fill_memory(inds, sizeof(inds), s_ind_buf);
 }
@@ -1132,12 +1288,14 @@ void draw_end(void)
   _batch();
 
   static const VkDeviceSize offsets[1] = { 0 };
-  vkCmdBindVertexBuffers(CUR_GRAPHICS_CMDBUF, 0, 1, &s_vert_buf, offsets);
+  vkCmdBindVertexBuffers(CUR_GRAPHICS_CMDBUF, 0, 1, &s_vert_buf,
+                         offsets);
 
   vkCmdBindIndexBuffer(CUR_GRAPHICS_CMDBUF, s_ind_buf, 0,
                        VK_INDEX_TYPE_UINT16);
 
-  vkCmdDrawIndexed(CUR_GRAPHICS_CMDBUF, s_vert_count * 1.5f, 1, 0, 0, 0);
+  vkCmdDrawIndexed(CUR_GRAPHICS_CMDBUF, s_vert_count * 1.5f,
+                   1, 0, 0, 0);
 
   s_vert_count = 0;
 
@@ -1183,33 +1341,73 @@ void draw_end(void)
   s_cur_frame_ind = (s_cur_frame_ind + 1) % s_frames_count;
 }
 
+void camera_set(camera_t cam) {
+  _ubo_t ubo = { cam };
+
+  _fill_memory(&cam, sizeof(ubo), s_ubufs[s_cur_frame_ind]);
+
+  vkCmdBindDescriptorSets(CUR_GRAPHICS_CMDBUF,
+                          VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          s_pipeline_layout, 0, 1,
+                          &s_descriptor_sets[s_cur_frame_ind], 0, NULL);
+}
+
+void camera_reset(void) {
+}
+
 void draw_rect(rect_t rect, color_t color, f32 depth)
 {
   assert(s_vert_count < RESERVED_VERTS_COUNT,
          "verts number exceeds the limit");
 
-  s_verts[s_vert_count++] = (vert_t){
+  s_verts[s_vert_count++] = (_vert_t){
     .pos   = { rect.x, rect.y, depth },
     .color = color,
     .uv    = { 0.0f, 0.0f }
   };
 
-  s_verts[s_vert_count++] = (vert_t){
+  s_verts[s_vert_count++] = (_vert_t){
     .pos   = { rect.x + rect.width, rect.y, depth },
     .color = color,
     .uv    = { 0.0f, 0.0f }
   };
 
-  s_verts[s_vert_count++] = (vert_t){
+  s_verts[s_vert_count++] = (_vert_t){
     .pos   = { rect.x + rect.width, rect.y + rect.height, depth },
     .color = color,
     .uv    = { 0.0f, 0.0f }
   };
 
-  s_verts[s_vert_count++] = (vert_t){
+  s_verts[s_vert_count++] = (_vert_t){
     .pos   = { rect.x , rect.y + rect.height, depth },
     .color = color,
     .uv    = { 0.0f, 0.0f }
   };
+}
+
+struct texture* texture_load(const char *path)
+{
+  struct texture *tex = malloc(sizeof(struct texture));
+
+  tex->pixels = stbi_load(path, &tex->width, &tex->height,
+                          NULL, STBI_rgb_alpha);
+  if (!tex->pixels) {
+    error("failed to load \"%s\" texture: %s", path,
+          stbi_failure_reason());
+    free(tex);
+    return NULL;
+  }
+
+  info("loaded texture \"%s\" [%p]", path, tex);
+
+  return tex;
+}
+
+void texture_free(struct texture* texture)
+{
+  stbi_image_free(texture->pixels);
+  free(texture);
+
+  info("freed texture %p", texture);
 }
 

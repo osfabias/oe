@@ -15,9 +15,11 @@ set(OE_HEADER_FILES
 )
 
 set(OE_SOURCE_FILES
-  ./src/init.c
   ./src/log.c
   ./src/gfx.c
+  ./src/init.c
+  ./src/utils.c
+  ./src/input.c
 )
 
 if (OE_SHARED)
@@ -30,7 +32,7 @@ endif()
 
 add_library(oe ${OE_LIB_TYPE} ${OE_SOURCE_FILES} ${OE_HEADER_FILES})
 
-target_link_libraries(oe PRIVATE opl archivio Vulkan::Vulkan)
+target_link_libraries(oe PRIVATE opl archivio stb_image Vulkan::Vulkan)
 target_include_directories(oe PUBLIC include)
 target_compile_options(
   oe PRIVATE

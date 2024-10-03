@@ -9,6 +9,8 @@ void init(i32 width, i32 height, const char *title)
 {
   _log_init();
 
+  _input_init();
+
   if (!opl_init())
     fatal("failed to initialize opl");
   trace("opl initialized");
@@ -25,6 +27,7 @@ void init(i32 width, i32 height, const char *title)
 
 i32 should_close(void)
 {
+  _input_update();
   opl_update();
   return opl_window_should_close(s_window);
 }
