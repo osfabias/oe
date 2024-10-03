@@ -1,4 +1,5 @@
 #include <time.h>
+#include <stdlib.h>
 
 #include <oe.h>
 
@@ -15,15 +16,16 @@ int main(void)
       s = time(NULL);
 
     draw_begin(0x292831ff);
+      srand(0);
       for (int i = 0; i < 1000; ++i) {
         draw_rect(
           (rect_t){
-            -0.8f + (i % 75) / 75.0f,
+            -0.9f + (i % 60) / 35.0f,
             -0.8f + t + i / 600.0f,
-            .05f,
-            .05f
+            .1f,
+            .1f
           },
-          0xee8695ff, 0.0f
+          rand(), 0.0f
         );
       }
     draw_end();

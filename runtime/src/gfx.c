@@ -1002,7 +1002,7 @@ void _vert_buf_create(void)
 void _ind_buf_create(void)
 {
   if (!_buf_create(VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                   sizeof(uint16_t) * RESERVED_VERTS_COUNT,
+                   sizeof(uint16_t) * RESERVED_VERTS_COUNT * 1.5f,
                    &s_ind_buf, &s_ind_buf_mem))
     fatal("failed to create buffer");
   trace("Vulkan index buffer created");
