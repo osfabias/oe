@@ -7,7 +7,7 @@ int main(void)
 {
   init(1280, 720, "oe application");
 
-  time_t s = time(NULL);
+  time_t seed = time(NULL);
 
   texture_t tex = texture_load("assets/textures/character.png");
 
@@ -16,6 +16,8 @@ int main(void)
     .zoom     = 1.0f,
     .rotation = 0.0f
   };
+
+  texture_bind(tex);
 
   while (!should_close()) {
     // scene update
@@ -35,16 +37,14 @@ int main(void)
       // scene draw
       camera_set(cam);
 
-        srand(0);
-        int i;
-
-        for (i = 0; i < 16000; ++i) {
+        srand(seed);
+        for (int i = 0; i < 15876; ++i) {
           draw_rect(
             (rect_t){
-              -0.9f + (i % 126) * 0.36f,
-              -0.8f + (i / 126) * 0.64f,
-              0.36f,
-              0.64f
+              -0.9f + (i % 126) * 0.36f + (float)rand() / RAND_MAX,
+              -0.8f + (i / 126) * 0.64f + (float)rand() / RAND_MAX,
+              0.18f + ((float)rand() / RAND_MAX) * 0.5f,
+              0.32f + ((float)rand() / RAND_MAX) * 0.5f
             },
             rand(), 0.0f
           );
@@ -61,3 +61,4 @@ int main(void)
   quit();
   return 0;
 }
+

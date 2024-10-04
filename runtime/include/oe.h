@@ -356,6 +356,11 @@ extern texture_t texture_load(const char *path);
  */
 extern void texture_free(texture_t texture);
 
+/**
+ * @brief Binds texture to the sampler.
+ */
+extern void texture_bind(texture_t texture);
+
 // +------------------------------------------------------------------+
 // |                           utils                                  |
 // +------------------------------------------------------------------+

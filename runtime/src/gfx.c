@@ -24,8 +24,10 @@
   s_cmdbufs[QUEUE_INDEX_TRANSFER][s_cur_frame_ind]
 
 struct texture {
+  VkImage image;
+  VkDeviceMemory mem;
+  VkImageView view;
   int width, height;
-  stbi_uc *pixels;
 };
 
 enum queue_index {
@@ -73,6 +75,7 @@ static i32 s_vert_count = 0;
 static VkBuffer s_ind_buf;
 static VkDeviceMemory s_ind_buf_mem;
 static VkBuffer s_ubufs[MAX_FRAMES_COUNT];
+static VkSampler s_sampler;
 static VkDeviceMemory s_ubuf_mems[MAX_FRAMES_COUNT];
 static VkSemaphore s_image_available_semaphores[MAX_FRAMES_COUNT];
 static VkSemaphore s_renderer_finished_semaphores[MAX_FRAMES_COUNT];
@@ -80,18 +83,14 @@ static VkFence s_in_flight_fences[MAX_FRAMES_COUNT];
 static i32 s_cur_frame_ind = 0;
 static uint32_t s_cur_image_ind;
 
-inline static void _find_queue_families(void);
-inline static void _check_device_exts(void);
-inline static i32  _buf_create(VkBufferUsageFlags usage, VkDeviceSize size,
-                               VkBuffer *buf, VkDeviceMemory *mem);
-inline static void _buf_copy(VkBuffer src, VkBuffer dst, VkDeviceSize size);
-inline static void _fill_memory(const void *data, VkDeviceSize size, VkBuffer buf);
 
 inline static void _instance_create(void);
 inline static void _select_gpu(void);
+inline static void _surface_create(opl_window_t window);
+inline static void _find_queue_families(void);
 inline static void _device_create(void);
 inline static void _obtain_queues(void);
-inline static void _surface_create(opl_window_t window);
+inline static void _check_device_exts(void);
 inline static void _swapchain_create(VkSwapchainKHR old_swapchain);
 inline static void _swapchain_get_images(void);
 inline static void _swapchain_image_views_create(void);
@@ -106,7 +105,8 @@ inline static void _command_pools_create(void);
 inline static void _cmdbufs_allocate(void);
 inline static void _vert_buf_create(void);
 inline static void _ind_buf_create(void);
-inline static void _uniform_buf_create(void);
+inline static void _ubuf_create(void);
+inline static void _sampler_create(void);
 inline static void _sync_objects_create(void);
 
 void _gfx_init(opl_window_t window)
@@ -132,7 +132,8 @@ void _gfx_init(opl_window_t window)
   _cmdbufs_allocate();
   _vert_buf_create();
   _ind_buf_create();
-  _uniform_buf_create();
+  _ubuf_create();
+  _sampler_create();
   _sync_objects_create();
 
   trace("gfx initialized");
@@ -154,6 +155,9 @@ void _gfx_quit(void)
     vkDestroySemaphore(s_device, s_image_available_semaphores[i],
                        NULL);
   }
+
+  // sampler
+  vkDestroySampler(s_device, s_sampler, NULL);
 
   // uniform buffers
   for (uint32_t i = 0; i < s_frames_count; ++i) {
@@ -279,8 +283,65 @@ void _check_device_exts(void)
   }
 }
 
-i32 _buf_create(VkBufferUsageFlags usage, VkDeviceSize size,
-                VkBuffer *buf, VkDeviceMemory *mem)
+inline static uint32_t _find_mem_type(uint32_t type_bits, 
+                                      VkMemoryPropertyFlags props)
+{
+  VkPhysicalDeviceMemoryProperties mem_props;
+  vkGetPhysicalDeviceMemoryProperties(s_gpu, &mem_props);
+
+  for (uint32_t i = 0; i < mem_props.memoryTypeCount; i++) {
+    if (
+      (type_bits & (1 << i)) &&
+      (mem_props.memoryTypes[i].propertyFlags & props) == props 
+    )
+      return i;
+  }
+
+  return UINT32_MAX;
+}
+
+inline static VkCommandBuffer _onetime_cmdbuf_begin(void) {
+    const VkCommandBufferAllocateInfo info = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+      .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+      .commandPool = s_command_pools[QUEUE_INDEX_GRAPHICS],
+      .commandBufferCount = 1,
+    };
+
+    VkCommandBuffer commandBuffer;
+    vkAllocateCommandBuffers(s_device, &info, &commandBuffer);
+
+    const VkCommandBufferBeginInfo beginInfo = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+
+    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+    return commandBuffer;
+}
+
+inline static void _onetime_cmdbuf_end(VkCommandBuffer cmdbuf) {
+    vkEndCommandBuffer(cmdbuf);
+
+    VkSubmitInfo submitInfo = {
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .commandBufferCount = 1,
+      .pCommandBuffers = &cmdbuf,
+    };
+
+    vkQueueSubmit(s_queues[QUEUE_INDEX_GRAPHICS], 1, &submitInfo,
+                  VK_NULL_HANDLE);
+    vkQueueWaitIdle(s_queues[QUEUE_INDEX_GRAPHICS]);
+
+    vkFreeCommandBuffers(
+      s_device, s_command_pools[QUEUE_INDEX_GRAPHICS], 1, &cmdbuf);
+}
+
+
+inline static i32 _buf_create(VkBufferUsageFlags usage,
+                              VkDeviceSize size, VkBuffer *buf,
+                              VkDeviceMemory *mem)
 {
   // create buffer
   const VkBufferCreateInfo buf_info = {
@@ -300,30 +361,15 @@ i32 _buf_create(VkBufferUsageFlags usage, VkDeviceSize size,
     return 0;
   }
 
-  // get the requirements and find suitable memory type
   VkMemoryRequirements mem_requirements;
-  vkGetBufferMemoryRequirements(s_device, s_vert_buf, &mem_requirements);
+  vkGetBufferMemoryRequirements(s_device, *buf,
+                                &mem_requirements);
 
-  VkPhysicalDeviceMemoryProperties mem_props;
-  vkGetPhysicalDeviceMemoryProperties(s_gpu, &mem_props);
-
-  uint32_t mem_type_ind = UINT32_MAX;
-
-  static const VkMemoryPropertyFlags target_mem_prop_flags =
-    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-
-  for (uint32_t i = 0; i < mem_props.memoryTypeCount; i++) {
-    VkMemoryPropertyFlags mem_prop_flags =
-      mem_props.memoryTypes[i].propertyFlags;
-
-    if (
-      (mem_requirements.memoryTypeBits & (1 << i)) &&
-      (mem_prop_flags & target_mem_prop_flags) == target_mem_prop_flags 
-    ) {
-      mem_type_ind = i;
-      break;
-    }
-  }
+  // get the requirements and find suitable memory type
+  uint32_t mem_type_ind = _find_mem_type(
+    mem_requirements.memoryTypeBits,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+  );
 
   if (mem_type_ind == UINT32_MAX) {
     error("failed to find suitable memory type");
@@ -349,49 +395,24 @@ i32 _buf_create(VkBufferUsageFlags usage, VkDeviceSize size,
   return 1;
 }
 
-void _buf_copy(VkBuffer src, VkBuffer dst, VkDeviceSize size)
+inline static void _buf_copy(VkBuffer src, VkBuffer dst,
+                             VkDeviceSize size)
 {
-  const VkCommandBufferAllocateInfo cmd_buf_alloc_info = {
-    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-    .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-    .commandPool = s_command_pools[QUEUE_INDEX_TRANSFER],
-    .commandBufferCount = 1,
-  };
-
-  VkCommandBuffer cmd_buf;
-  vkAllocateCommandBuffers(s_device, &cmd_buf_alloc_info, &cmd_buf);
-
-  const VkCommandBufferBeginInfo begin_info = {
-    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-  };
-
-  vkBeginCommandBuffer(cmd_buf, &begin_info);
+  VkCommandBuffer cmdbuf;
+  cmdbuf = _onetime_cmdbuf_begin();
 
   const VkBufferCopy copy_region = {
     .srcOffset = 0, // Optional
     .dstOffset = 0, // Optional
     .size = size,
   };
-  vkCmdCopyBuffer(cmd_buf, src, dst, 1, &copy_region);
+  vkCmdCopyBuffer(cmdbuf, src, dst, 1, &copy_region);
 
-  vkEndCommandBuffer(cmd_buf);
-
-  const VkSubmitInfo submit_info = {
-    .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-    .commandBufferCount = 1,
-    .pCommandBuffers = &cmd_buf,
-  };
-
-  vkQueueSubmit(s_queues[QUEUE_INDEX_TRANSFER], 1, &submit_info,
-                VK_NULL_HANDLE);
-  vkQueueWaitIdle(s_queues[QUEUE_INDEX_TRANSFER]);
-
-  vkFreeCommandBuffers(s_device, s_command_pools[QUEUE_INDEX_TRANSFER],
-                       1, &cmd_buf);
+  _onetime_cmdbuf_end(cmdbuf);
 }
 
-void _fill_memory(const void *data, VkDeviceSize size, VkBuffer buf)
+inline static void _fill_memory(const void *data, VkDeviceSize size,
+                                VkBuffer buf)
 {
   VkBuffer staging_buf;
   VkDeviceMemory stagin_buf_mem;
@@ -1128,7 +1149,7 @@ void _ind_buf_create(void)
   trace("Vulkan index buffer created");
 }
 
-void _uniform_buf_create(void) {
+void _ubuf_create(void) {
   VkDescriptorBufferInfo buf_infos[s_frames_count];
   VkWriteDescriptorSet writes[s_frames_count];
 
@@ -1160,6 +1181,35 @@ void _uniform_buf_create(void) {
   vkUpdateDescriptorSets(s_device, s_frames_count, writes, 0, NULL);
 
   trace("Vulkan uniform buffers created");
+}
+
+void _sampler_create(void) {
+  VkPhysicalDeviceProperties props;
+  vkGetPhysicalDeviceProperties(s_gpu, &props);
+
+  const VkSamplerCreateInfo info = {
+    .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+    .magFilter = VK_FILTER_NEAREST,
+    .minFilter = VK_FILTER_NEAREST,
+    .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+    .anisotropyEnable = VK_FALSE,
+    // samplerInfo.maxAnisotropy
+    .borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+    .unnormalizedCoordinates = VK_FALSE,
+    .compareEnable = VK_FALSE,
+    .compareOp = VK_COMPARE_OP_ALWAYS,
+    .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+    .mipLodBias = 0.0f,
+    .minLod = 0.0f,
+    .maxLod = 0.0f,
+  };
+
+  VkResult res = vkCreateSampler(s_device, &info, NULL, &s_sampler);
+  if (res != VK_SUCCESS)
+    fatal("failed to create Vulkan sampler");
+  trace("Vulkan sampler created");
 }
 
 void _sync_objects_create(void)
@@ -1369,34 +1419,211 @@ void draw_rect(rect_t rect, color_t color, f32 depth)
   s_verts[s_vert_count++] = (_vert_t){
     .pos   = { rect.x + rect.width, rect.y, depth },
     .color = color,
-    .uv    = { 0.0f, 0.0f }
+    .uv    = { 1.0f, 0.0f }
   };
 
   s_verts[s_vert_count++] = (_vert_t){
     .pos   = { rect.x + rect.width, rect.y + rect.height, depth },
     .color = color,
-    .uv    = { 0.0f, 0.0f }
+    .uv    = { 1.0f, 1.0f }
   };
 
   s_verts[s_vert_count++] = (_vert_t){
     .pos   = { rect.x , rect.y + rect.height, depth },
     .color = color,
-    .uv    = { 0.0f, 0.0f }
+    .uv    = { 0.0f, 1.0f }
   };
+}
+
+inline static void _image_create(
+  uint32_t width, uint32_t height, VkImageUsageFlags usage, VkMemoryPropertyFlags mem_props, VkImage *image, VkDeviceMemory *mem)
+{
+    const VkImageCreateInfo info = {
+      .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+      .imageType = VK_IMAGE_TYPE_2D,
+      .extent = { width, height, 1 },
+      .mipLevels = 1,
+      .arrayLayers = 1,
+      .format = VK_FORMAT_B8G8R8A8_SRGB,
+      .tiling = VK_IMAGE_TILING_OPTIMAL,
+      .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+      .usage = usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+      .samples = VK_SAMPLE_COUNT_1_BIT,
+      .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+
+    VkResult res = vkCreateImage(s_device, &info, NULL, image);
+    if (res != VK_SUCCESS)
+      fatal("failed to create Vulkan image: %d", res);
+
+    VkMemoryRequirements mem_requirements;
+    vkGetImageMemoryRequirements(s_device, *image, &mem_requirements);
+
+    const VkMemoryAllocateInfo mem_info = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+      .allocationSize = mem_requirements.size,
+      .memoryTypeIndex = _find_mem_type(
+        mem_requirements.memoryTypeBits, mem_props),
+    };
+
+    res = vkAllocateMemory(s_device, &mem_info, NULL, mem);
+    if (res != VK_SUCCESS)
+      fatal("failed to allocate memory for Vulkan image: %d", res);
+
+    vkBindImageMemory(s_device, *image, *mem, 0);
+}
+
+VkImageView _image_view_create(VkImage image) {
+  const VkImageViewCreateInfo info = {
+    .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+    .image = image,
+    .viewType = VK_IMAGE_VIEW_TYPE_2D,
+    .format = VK_FORMAT_B8G8R8A8_SRGB,
+    .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+    .subresourceRange.baseMipLevel = 0,
+    .subresourceRange.levelCount = 1,
+    .subresourceRange.baseArrayLayer = 0,
+    .subresourceRange.layerCount = 1,
+  };
+
+  VkImageView view;
+  const VkResult res = vkCreateImageView(s_device, &info, NULL,
+                                         &view);
+  if (res != VK_SUCCESS)
+    fatal("failed to create texture image view: %d", res);
+
+  return view;
+}
+
+void _copy_buf_to_image(VkBuffer buffer, VkImage image,
+                        uint32_t width, uint32_t height) {
+  VkCommandBuffer cmdbuf = _onetime_cmdbuf_begin();
+
+  const VkBufferImageCopy region = {
+    .bufferOffset = 0,
+    .bufferRowLength = 0,
+    .bufferImageHeight = 0,
+
+    .imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+    .imageSubresource.mipLevel = 0,
+    .imageSubresource.baseArrayLayer = 0,
+    .imageSubresource.layerCount = 1,
+
+    .imageOffset = {0, 0, 0},
+    .imageExtent = { width, height, 1 },
+  };
+
+  vkCmdCopyBufferToImage(
+      cmdbuf,
+      buffer,
+      image,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      1,
+      &region
+  );
+
+  _onetime_cmdbuf_end(cmdbuf);
+}
+
+void _trans_image_layout(VkImage image, VkImageLayout old,
+                         VkImageLayout new)
+{
+  VkCommandBuffer cmdbuf = _onetime_cmdbuf_begin();
+
+  VkImageMemoryBarrier barrier = {
+    .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+    .oldLayout = old,
+    .newLayout = new,
+    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+    .image = image,
+    .subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+    .subresourceRange.baseMipLevel = 0,
+    .subresourceRange.levelCount = 1,
+    .subresourceRange.baseArrayLayer = 0,
+    .subresourceRange.layerCount = 1,
+    .srcAccessMask = 0, // TODO
+    .dstAccessMask = 0, // TODO
+  };
+
+  VkPipelineStageFlags src_stage;
+  VkPipelineStageFlags dst_stage;
+
+  if (
+    old == VK_IMAGE_LAYOUT_UNDEFINED &&
+    new == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+  ) {
+      barrier.srcAccessMask = 0;
+      barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+      src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+      dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  } else if (
+    old == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+    new == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+  ) {
+      barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+      src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+      dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  } else
+    fatal("unsupported layout transition");
+
+  vkCmdPipelineBarrier(
+    cmdbuf,
+    src_stage, dst_stage,
+    0,
+    0, NULL,
+    0, NULL,
+    1, &barrier
+  );
+
+  _onetime_cmdbuf_end(cmdbuf);
 }
 
 struct texture* texture_load(const char *path)
 {
   struct texture *tex = malloc(sizeof(struct texture));
 
-  tex->pixels = stbi_load(path, &tex->width, &tex->height,
-                          NULL, STBI_rgb_alpha);
-  if (!tex->pixels) {
+  stbi_uc *pixels = stbi_load(path, &tex->width, &tex->height,
+                              NULL, STBI_rgb_alpha);
+  int image_size = tex->width * tex->height * 4;
+
+  if (!pixels) {
     error("failed to load \"%s\" texture: %s", path,
           stbi_failure_reason());
     free(tex);
     return NULL;
   }
+
+  VkBuffer staging_buf;
+  VkDeviceMemory staging_buf_mem;
+  _buf_create(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, image_size,
+              &staging_buf, &staging_buf_mem);
+
+  void* data;
+  vkMapMemory(s_device, staging_buf_mem, 0, image_size, 0, &data);
+  memcpy(data, pixels, image_size);
+  vkUnmapMemory(s_device, staging_buf_mem);
+
+  stbi_image_free(pixels);
+
+  _image_create(tex->width, tex->height, VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &tex->image,
+                &tex->mem);
+
+  _trans_image_layout(tex->image, VK_IMAGE_LAYOUT_UNDEFINED,
+                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  _copy_buf_to_image(staging_buf, tex->image, tex->width, tex->height);
+
+  _trans_image_layout(tex->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+  tex->view = _image_view_create(tex->image);
+
+  vkFreeMemory(s_device, staging_buf_mem, NULL);
+  vkDestroyBuffer(s_device, staging_buf, NULL);
 
   info("loaded texture \"%s\" [%p]", path, tex);
 
@@ -1405,9 +1632,36 @@ struct texture* texture_load(const char *path)
 
 void texture_free(struct texture* texture)
 {
-  stbi_image_free(texture->pixels);
+  vkDestroyImageView(s_device, texture->view, NULL);
+  vkFreeMemory(s_device, texture->mem, NULL);
+  vkDestroyImage(s_device, texture->image, NULL);
   free(texture);
 
   info("freed texture %p", texture);
+}
+
+void texture_bind(texture_t texture)
+{
+  VkWriteDescriptorSet writes[s_frames_count];
+
+  const VkDescriptorImageInfo image_info = {
+    .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    .imageView = texture->view,
+    .sampler = s_sampler,
+  };
+
+  for (uint32_t i = 0; i < s_frames_count; ++i) {
+    writes[i] = (VkWriteDescriptorSet){
+      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+      .dstSet = s_descriptor_sets[i],
+      .dstBinding = 1,
+      .dstArrayElement = 0,
+      .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+      .descriptorCount = 1,
+      .pImageInfo = &image_info,
+    };
+  }
+
+  vkUpdateDescriptorSets(s_device, s_frames_count, writes, 0, NULL);
 }
 
