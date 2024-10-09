@@ -744,7 +744,7 @@ void _descriptor_set_layout_create(void) {
       .binding = 1,
       .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
       .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-      .descriptorCount = 1,
+      .descriptorCount = MAX_TEXTURE_COUNT,
       .pImmutableSamplers = NULL, // optional
     }
   };
@@ -772,7 +772,7 @@ void _descriptor_pool_create(void) {
     },
     {
       .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-      .descriptorCount = s_frames_count
+      .descriptorCount = MAX_TEXTURE_COUNT * s_frames_count
     }
   };
 
@@ -888,7 +888,7 @@ void _pipeline_create(void)
     },
   };
 
-  const VkVertexInputAttributeDescription vert_input_attr_descs[3] = {
+  const VkVertexInputAttributeDescription vert_input_attr_descs[4] = {
     { // position
       .binding = 0,
       .location = 0,
@@ -907,6 +907,12 @@ void _pipeline_create(void)
       .format = VK_FORMAT_R32G32_SFLOAT,
       .offset = offsetof(_vert_t, uv),
     },
+    { // texture index
+      .binding = 0,
+      .location = 3,
+      .format = VK_FORMAT_R8_UINT,
+      .offset = offsetof(_vert_t, tex_ind),
+    },
   };
 
   const VkVertexInputBindingDescription vert_input_bind_desc = {
@@ -919,7 +925,7 @@ void _pipeline_create(void)
     .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
     .flags = 0,
     .pNext = NULL,
-    .vertexAttributeDescriptionCount = 3,
+    .vertexAttributeDescriptionCount = 4,
     .pVertexAttributeDescriptions = vert_input_attr_descs,
     .vertexBindingDescriptionCount = 1,
     .pVertexBindingDescriptions = &vert_input_bind_desc,
@@ -1391,7 +1397,13 @@ void draw_end(void)
   s_cur_frame_ind = (s_cur_frame_ind + 1) % s_frames_count;
 }
 
-void camera_set(camera_t cam) {
+void draw_wait(void)
+{
+  vkDeviceWaitIdle(s_device);
+}
+
+void camera_set(camera_t cam)
+{
   _ubo_t ubo = { cam };
 
   _fill_memory(&cam, sizeof(ubo), s_ubufs[s_cur_frame_ind]);
@@ -1402,36 +1414,90 @@ void camera_set(camera_t cam) {
                           &s_descriptor_sets[s_cur_frame_ind], 0, NULL);
 }
 
-void camera_reset(void) {
+void camera_reset(void)
+{
 }
 
-void draw_rect(rect_t rect, color_t color, f32 depth)
+void draw_rect(rect_t rect, color_t color)
 {
+  draw_texture_ext(rect, (rect_t){ 0.0f, 0.0f, 1.0f, 1.0f },
+                   DEFAULT_TEXTURE_IND, color, 0.0f, 0.0f);
+}
+
+void draw_rect_ext(rect_t rect, color_t color, float rot, float depth)
+{
+  draw_texture_ext(rect, (rect_t){ 0.0f, 0.0f, 1.0f, 1.0f },
+                   DEFAULT_TEXTURE_IND, color, rot, depth);
+}
+
+void draw_texture(vec2_t pos, rect_t src_rect, u32 tex_ind)
+{
+  draw_texture_ext(
+    (rect_t){ pos.x, pos.y, src_rect.width, src_rect.height },
+    src_rect,tex_ind, WHITE, 0.0f, 0.0f);
+}
+
+void draw_texture_ext(rect_t dst_rect, rect_t src_rect, u32 tex_ind,
+                      color_t color, float rot, float depth) {
+  (void)(rot);
+
   assert(s_vert_count < RESERVED_VERTS_COUNT,
          "verts number exceeds the limit");
 
   s_verts[s_vert_count++] = (_vert_t){
-    .pos   = { rect.x, rect.y, depth },
-    .color = color,
-    .uv    = { 0.0f, 0.0f }
+    .pos     = {
+      dst_rect.x,
+      dst_rect.y,
+      depth
+    },
+    .color   = color,
+    .uv      = {
+      src_rect.x,
+      src_rect.y
+    },
+    .tex_ind = tex_ind,
   };
 
   s_verts[s_vert_count++] = (_vert_t){
-    .pos   = { rect.x + rect.width, rect.y, depth },
-    .color = color,
-    .uv    = { 1.0f, 0.0f }
+    .pos     = {
+      dst_rect.x + dst_rect.width,
+      dst_rect.y,
+      depth
+    },
+    .color   = color,
+    .uv      = {
+      src_rect.x + src_rect.width,
+      src_rect.y,
+    },
+    .tex_ind = tex_ind,
   };
 
   s_verts[s_vert_count++] = (_vert_t){
-    .pos   = { rect.x + rect.width, rect.y + rect.height, depth },
-    .color = color,
-    .uv    = { 1.0f, 1.0f }
+    .pos     = {
+      dst_rect.x + dst_rect.width,
+      dst_rect.y + dst_rect.height,
+      depth
+    },
+    .color   = color,
+    .uv      = {
+      src_rect.x + src_rect.width,
+      src_rect.y + src_rect.height,
+    },
+    .tex_ind = tex_ind,
   };
 
   s_verts[s_vert_count++] = (_vert_t){
-    .pos   = { rect.x , rect.y + rect.height, depth },
-    .color = color,
-    .uv    = { 0.0f, 1.0f }
+    .pos     = {
+      dst_rect.x,
+      dst_rect.y + dst_rect.height,
+      depth
+    },
+    .color   = color,
+    .uv      = {
+      src_rect.x,
+      src_rect.y + src_rect.height,
+    },
+    .tex_ind = tex_ind,
   };
 }
 
@@ -1640,8 +1706,11 @@ void texture_free(struct texture* texture)
   info("freed texture %p", texture);
 }
 
-void texture_bind(texture_t texture)
+void texture_bind(texture_t texture, u32 ind)
 {
+  assert(ind < MAX_TEXTURE_COUNT,
+         "texture binding index exceeds the bounds of the array")
+
   VkWriteDescriptorSet writes[s_frames_count];
 
   const VkDescriptorImageInfo image_info = {
@@ -1655,7 +1724,7 @@ void texture_bind(texture_t texture)
       .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
       .dstSet = s_descriptor_sets[i],
       .dstBinding = 1,
-      .dstArrayElement = 0,
+      .dstArrayElement = ind,
       .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
       .descriptorCount = 1,
       .pImageInfo = &image_info,

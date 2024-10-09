@@ -260,16 +260,16 @@ extern int is_key_released(key_t key);
 extern int is_btn_pressed(btn_t btn);
 
 /**
+ * @brief Returns whether the mouse button was down
+ *        this frame or not.
+ */
+extern int is_btn_down(btn_t btn);
+
+/**
  * @brief Returns whether the mouse button was
  *        just released this frame or not.
  */
 extern int is_btn_released(btn_t btn);
-
-/**
- * @brief Returns whether the mouse button was up
- *        this frame or not.
- */
-extern int is_btn_up(btn_t btn);
 
 /**
  * @brief Returns mouse position in the window.
@@ -284,6 +284,11 @@ extern float mouse_wheel(void);
 // +------------------------------------------------------------------+
 // |                          drawing                                 |
 // +------------------------------------------------------------------+
+
+#define DEFAULT_TEXTURE_IND 2
+#define MAX_TEXTURE_COUNT   (DEFAULT_TEXTURE_IND + 1)
+
+#define WHITE 0xffffffff
 
 /**
  * @brief 32 bit color.
@@ -325,6 +330,11 @@ extern void draw_begin(color_t color);
 extern void draw_end(void);
 
 /**
+ * @brief Waits for gpu to end frame rendering.
+ */
+extern void draw_wait(void);
+
+/**
  * @brief Sets camera.
  */
 extern void camera_set(camera_t cam);
@@ -335,9 +345,26 @@ extern void camera_set(camera_t cam);
 extern void camera_reset(void);
 
 /**
- * @brief Draw colored rectangle.
+ * @brief Draws colored rectangle.
  */
-extern void draw_rect(rect_t rect, color_t color, f32 depth);
+extern void draw_rect(rect_t rect, color_t color);
+
+/**
+ * @brief Draws colored rectangle.
+ */
+extern void draw_rect_ext(rect_t rect, color_t color, float rot,
+                          float depth);
+
+/**
+ * @brief Draws textured rectangle.
+ */
+extern void draw_texture(vec2_t pos, rect_t src_rect, u32 tex_ind);
+
+/**
+ * @brief Draws textured rectangle.
+ */
+extern void draw_texture_ext(rect_t dst_rect, rect_t src_rect, u32 tex_ind,
+                             color_t color, float rot, float depth);
 
 /**
  * @brief Loads texture.
@@ -359,7 +386,7 @@ extern void texture_free(texture_t texture);
 /**
  * @brief Binds texture to the sampler.
  */
-extern void texture_bind(texture_t texture);
+extern void texture_bind(texture_t texture, u32 ind);
 
 // +------------------------------------------------------------------+
 // |                           utils                                  |
@@ -467,7 +494,7 @@ extern void log_msg(log_level_t level, const char *msg, ...);
  * @param msg A message to show on assertion fail.
  * @param ... VA arguments.
  */
-#ifdef oe_debug 
+#ifdef OE_DEBUG_BUILD
 #define assert(x, ...) \
 if (!(x)) { fatal(__VA_ARGS__); }
 #else
