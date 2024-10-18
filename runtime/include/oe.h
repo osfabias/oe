@@ -27,7 +27,7 @@ typedef float  f32;
 typedef double f64;
 
 // +------------------------------------------------------------------+
-// |                            math                                  |
+// |                              math                                |
 // +------------------------------------------------------------------+
 
 /**
@@ -62,8 +62,6 @@ extern void init(u16 width, u16 height, const char *title);
  * Initializes oe subsystems, opens window and creates surface for
  * rendering graphics.
  *
- * @param x      The x position of the window.
- * @param y      The y position of the window.
  * @param width  The width of the window.
  * @param heitgh The height of the window.
  * @param resx   Horizontal resolution. Leave as 0 to fit the
@@ -72,8 +70,8 @@ extern void init(u16 width, u16 height, const char *title);
  *               window resolution.
  * @param title  The title of the window.
  */
-extern void init_ext(u16 x, u16 y, u16 width, u16 height,
-                     u16 resx, u16 resy, const char *title);
+extern void init_ext(u16 width, u16 height, u16 resx, u16 resy,
+                     const char *title);
 
 /**
  * @brief Terminares oe.
@@ -332,6 +330,7 @@ typedef struct texture* texture_t;
  */
 typedef struct camera {
   vec2_t pos;
+  vec2_t view;
   f32    zoom;
   f32    rotation;
 } camera_t;

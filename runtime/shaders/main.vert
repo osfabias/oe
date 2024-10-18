@@ -7,8 +7,8 @@ layout(location = 3) in uint v_TexInd;
 
 struct Camera {
   vec2  pos;
+  vec2  view;
   float zoom;
-  float rotation;
 };
 
 layout(binding = 0) uniform UBO {
@@ -21,6 +21,10 @@ layout(location = 2) out uint f_TexInd;
 
 void main() {
   vec3 camPos = v_Position - vec3(ubo.cam.pos, 0.0f);
+
+  camPos.x /= ubo.cam.view.x;
+  camPos.y /= ubo.cam.view.y;
+
   gl_Position = vec4(camPos * ubo.cam.zoom, 1.0f);
 
   f_Color = v_Color.abgr;

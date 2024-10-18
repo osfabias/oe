@@ -17,9 +17,6 @@
 #define MAX_FRAMES_COUNT     3
 #define RESERVED_VERTS_COUNT 64000
 
-#define RESX 192
-#define RESy 108
-
 #define CUR_GRAPHICS_CMDBUF \
   s_cmdbufs[QUEUE_INDEX_GRAPHICS][s_cur_frame_ind]
 
