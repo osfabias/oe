@@ -5,7 +5,13 @@
 
 static opl_window_t s_window;
 
-void init(i32 width, i32 height, const char *title)
+void init(u16 width, u16 height, const char *title)
+{
+  init_ext(0, 0, width, height, 0, 0, title);
+}
+
+void init_ext(u16 x, u16 y, u16 width, u16 height,
+              u16 resx, u16 resy, const char *title)
 {
   _log_init();
 
@@ -15,12 +21,16 @@ void init(i32 width, i32 height, const char *title)
     fatal("failed to initialize opl");
   trace("opl initialized");
 
-  s_window = opl_window_open(width, height, title);
+  s_window = opl_window_open_ext(width, height, title, x, y,
+    OPL_WINDOW_HINT_TITLED_BIT |
+    OPL_WINDOW_HINT_CLOSABLE_BIT |
+    OPL_WINDOW_HINT_MINIATURIZABLE_BIT
+  );
   if (!s_window)
     fatal("failed to create window");
   trace("opened window");
 
-  _gfx_init(s_window);
+  _gfx_init(s_window, resx, resy);
 
   info("oe initialized");
 }

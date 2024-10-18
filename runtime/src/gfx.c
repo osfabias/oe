@@ -17,6 +17,9 @@
 #define MAX_FRAMES_COUNT     3
 #define RESERVED_VERTS_COUNT 64000
 
+#define RESX 192
+#define RESy 108
+
 #define CUR_GRAPHICS_CMDBUF \
   s_cmdbufs[QUEUE_INDEX_GRAPHICS][s_cur_frame_ind]
 
@@ -83,33 +86,43 @@ static VkFence s_in_flight_fences[MAX_FRAMES_COUNT];
 static i32 s_cur_frame_ind = 0;
 static uint32_t s_cur_image_ind;
 
-
 inline static void _instance_create(void);
+
 inline static void _select_gpu(void);
+
 inline static void _surface_create(opl_window_t window);
+
 inline static void _find_queue_families(void);
 inline static void _device_create(void);
 inline static void _obtain_queues(void);
 inline static void _check_device_exts(void);
-inline static void _swapchain_create(VkSwapchainKHR old_swapchain);
+
+inline static void _swapchain_create(u16 resx, u16 resy,
+                                     VkSwapchainKHR old_swapchain);
 inline static void _swapchain_get_images(void);
 inline static void _swapchain_image_views_create(void);
+inline static void _swapchain_recreate(u16 resx, u16 resy);
+
 inline static void _render_pass_create(void);
 inline static void _descriptor_set_layout_create(void);
 inline static void _descriptor_pool_create(void);
 inline static void _descriptor_sets_allocate(void);
 inline static void _pipeline_layout_create(void);
 inline static void _pipeline_create(void);
+
 inline static void _framebufs_create(void);
+
 inline static void _command_pools_create(void);
 inline static void _cmdbufs_allocate(void);
+
 inline static void _vert_buf_create(void);
 inline static void _ind_buf_create(void);
 inline static void _ubuf_create(void);
 inline static void _sampler_create(void);
+
 inline static void _sync_objects_create(void);
 
-void _gfx_init(opl_window_t window)
+void _gfx_init(opl_window_t window, i16 resx, i16 resy)
 {
   _instance_create();
   _select_gpu();
@@ -118,7 +131,7 @@ void _gfx_init(opl_window_t window)
   _device_create();
   _obtain_queues();
   _check_device_exts();
-  _swapchain_create(VK_NULL_HANDLE);
+  _swapchain_create(resx, resy, VK_NULL_HANDLE);
   _swapchain_get_images();
   _swapchain_image_views_create();
   _render_pass_create();
@@ -283,7 +296,7 @@ void _check_device_exts(void)
   }
 }
 
-inline static uint32_t _find_mem_type(uint32_t type_bits, 
+inline static uint32_t _find_mem_type(uint32_t type_bits,
                                       VkMemoryPropertyFlags props)
 {
   VkPhysicalDeviceMemoryProperties mem_props;
@@ -300,7 +313,8 @@ inline static uint32_t _find_mem_type(uint32_t type_bits,
   return UINT32_MAX;
 }
 
-inline static VkCommandBuffer _onetime_cmdbuf_begin(void) {
+inline static VkCommandBuffer _onetime_cmdbuf_begin(void)
+{
     const VkCommandBufferAllocateInfo info = {
       .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
       .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
@@ -321,7 +335,8 @@ inline static VkCommandBuffer _onetime_cmdbuf_begin(void) {
     return commandBuffer;
 }
 
-inline static void _onetime_cmdbuf_end(VkCommandBuffer cmdbuf) {
+inline static void _onetime_cmdbuf_end(VkCommandBuffer cmdbuf)
+{
     vkEndCommandBuffer(cmdbuf);
 
     VkSubmitInfo submitInfo = {
@@ -334,14 +349,12 @@ inline static void _onetime_cmdbuf_end(VkCommandBuffer cmdbuf) {
                   VK_NULL_HANDLE);
     vkQueueWaitIdle(s_queues[QUEUE_INDEX_GRAPHICS]);
 
-    vkFreeCommandBuffers(
-      s_device, s_command_pools[QUEUE_INDEX_GRAPHICS], 1, &cmdbuf);
+    vkFreeCommandBuffers(s_device, s_command_pools[QUEUE_INDEX_GRAPHICS],
+                         1, &cmdbuf);
 }
 
-
-inline static i32 _buf_create(VkBufferUsageFlags usage,
-                              VkDeviceSize size, VkBuffer *buf,
-                              VkDeviceMemory *mem)
+inline static i32 _buf_create(VkBufferUsageFlags usage, VkDeviceSize size,
+                              VkBuffer *buf, VkDeviceMemory *mem)
 {
   // create buffer
   const VkBufferCreateInfo buf_info = {
@@ -395,8 +408,7 @@ inline static i32 _buf_create(VkBufferUsageFlags usage,
   return 1;
 }
 
-inline static void _buf_copy(VkBuffer src, VkBuffer dst,
-                             VkDeviceSize size)
+inline static void _buf_copy(VkBuffer src, VkBuffer dst, VkDeviceSize size)
 {
   VkCommandBuffer cmdbuf;
   cmdbuf = _onetime_cmdbuf_begin();
@@ -556,17 +568,21 @@ void _surface_create(opl_window_t window)
   trace("Vulkan surface created");
 }
 
-void _swapchain_create(VkSwapchainKHR old_swapchain)
+void _swapchain_create(u16 resx, u16 resy, VkSwapchainKHR old_swapchain)
 {
   VkSurfaceCapabilitiesKHR capabs;
   vkGetPhysicalDeviceSurfaceCapabilitiesKHR(s_gpu, s_surface, &capabs);
+
+  s_swapchain_extent = capabs.currentExtent;
 
   assert(
     capabs.minImageCount <= MAX_FRAMES_COUNT,
     "minimal image count for the surface is %u, which is bigger than"
     "MAX_FRAMES_COUNT macro", capabs.minImageCount
   );
-  s_swapchain_extent = capabs.currentExtent;
+
+  if (resx > 0) { s_swapchain_extent.width  = resx; }
+  if (resy > 0) { s_swapchain_extent.height = resy; }
 
   VkSwapchainCreateInfoKHR info = {
     .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -584,7 +600,7 @@ void _swapchain_create(VkSwapchainKHR old_swapchain)
     //       on supports this color space 
     .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
 
-    .imageExtent = capabs.currentExtent,
+    .imageExtent = s_swapchain_extent,
     .imageArrayLayers = 1,
     .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                   VK_IMAGE_USAGE_TRANSFER_DST_BIT,
@@ -669,6 +685,23 @@ void _swapchain_image_views_create(void)
   }
 
   trace("Vulkan swapchain image views created");
+}
+
+void _swapchain_recreate(u16 resx, u16 resy)
+{
+  // framebufs
+  for (uint32_t i = 0; i < s_frames_count; ++i)
+    vkDestroyFramebuffer(s_device, s_framebufs[i], NULL);
+
+  // swapchain
+  for (uint32_t i = 0; i < s_frames_count; ++i)
+    vkDestroyImageView(s_device, s_swapchain_views[i], NULL);
+  vkDestroySwapchainKHR(s_device, s_swapchain, NULL);
+
+  _swapchain_create(resx, resy, s_swapchain);
+  _swapchain_get_images();
+  _swapchain_image_views_create();
+  _framebufs_create();
 }
 
 void _render_pass_create(void)
@@ -1070,16 +1103,12 @@ void _pipeline_create(void)
 
 void _framebufs_create(void)
 {
-  VkSurfaceCapabilitiesKHR swapchain_capabs;
-  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(s_gpu, s_surface,
-                                            &swapchain_capabs);
-
   VkFramebufferCreateInfo info = {
     .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
     .flags = 0,
     .pNext = NULL,
-    .width = swapchain_capabs.currentExtent.width,
-    .height = swapchain_capabs.currentExtent.height,
+    .width = s_swapchain_extent.width,
+    .height = s_swapchain_extent.height,
     .layers = 1,
     .renderPass = s_render_pass,
     .attachmentCount = 1,
@@ -1140,8 +1169,8 @@ void _cmdbufs_allocate(void)
 void _vert_buf_create(void)
 {
   if (!_buf_create(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                 sizeof(_vert_t) * RESERVED_VERTS_COUNT,
-                 &s_vert_buf, &s_vert_buf_mem))
+                   sizeof(_vert_t) * RESERVED_VERTS_COUNT,
+                   &s_vert_buf, &s_vert_buf_mem))
     fatal("failed to create buffer");
   trace("Vulkan vertex buffer created");
 }
@@ -1316,7 +1345,6 @@ void draw_begin(color_t color)
     .extent = s_swapchain_extent,
   };
   vkCmdSetScissor(CUR_GRAPHICS_CMDBUF, 0, 1, &scissor);
-
 }
 
 void _batch(void)
@@ -1416,6 +1444,11 @@ void camera_set(camera_t cam)
 
 void camera_reset(void)
 {
+}
+
+void set_resolution(u16 x, u16 y)
+{
+  _swapchain_recreate(x, y);
 }
 
 void draw_rect(rect_t rect, color_t color)

@@ -51,7 +51,7 @@ extern void _input_update(void);
  *
  * @param window An opl window handle of the main window.
  */
-extern void _gfx_init(opl_window_t window);
+extern void _gfx_init(opl_window_t window, i16 resx, i16 resy);
 
 /**
  * @brief Terminate graphics API.

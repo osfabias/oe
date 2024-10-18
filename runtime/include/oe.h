@@ -54,7 +54,26 @@ typedef struct vec3 { f32 x, y, z; } vec3_t;
  * @param heitgh The height of the window.
  * @param title  The title of the window.
  */
-extern void init(i32 width, i32 height, const char *title);
+extern void init(u16 width, u16 height, const char *title);
+
+/**
+ * @brief Initializes oe.
+ *
+ * Initializes oe subsystems, opens window and creates surface for
+ * rendering graphics.
+ *
+ * @param x      The x position of the window.
+ * @param y      The y position of the window.
+ * @param width  The width of the window.
+ * @param heitgh The height of the window.
+ * @param resx   Horizontal resolution. Leave as 0 to fit the
+ *               window resolution.
+ * @param resy   Vertical resolution. Leave as 0 to fit the
+ *               window resolution.
+ * @param title  The title of the window.
+ */
+extern void init_ext(u16 x, u16 y, u16 width, u16 height,
+                     u16 resx, u16 resy, const char *title);
 
 /**
  * @brief Terminares oe.
@@ -343,6 +362,11 @@ extern void camera_set(camera_t cam);
  * @brief Resets camera.
  */
 extern void camera_reset(void);
+
+/**
+ * @brief Sets window resolution.
+ */
+extern void set_resolution(u16 x, u16 y);
 
 /**
  * @brief Draws colored rectangle.
