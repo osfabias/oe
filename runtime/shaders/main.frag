@@ -9,5 +9,12 @@ layout(binding = 1) uniform sampler2D texSampler[4];
 layout(location = 0) out vec4 fragColor;
 
 void main() {
-  fragColor = texture(texSampler[f_TexInd], f_TexCoord) * f_Color;
+  ivec2 texSize = textureSize(texSampler[f_TexInd], 0);
+
+  vec2 resTexCoord = f_TexCoord;
+
+  resTexCoord.x /= texSize.x;
+  resTexCoord.y /= texSize.y;
+
+  fragColor = texture(texSampler[f_TexInd], resTexCoord).bgra * f_Color;
 }

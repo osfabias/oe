@@ -20,12 +20,14 @@ layout(location = 1) out vec2 f_TexCoord;
 layout(location = 2) out uint f_TexInd;
 
 void main() {
-  vec3 camPos = v_Position - vec3(ubo.cam.pos, 0.0f);
+  vec3 resPos = v_Position - vec3(ubo.cam.pos, 0.0f);
 
-  camPos.x /= ubo.cam.view.x;
-  camPos.y /= ubo.cam.view.y;
+  resPos.x /= ubo.cam.view.x;
+  resPos.y /= ubo.cam.view.y;
+  resPos *= 2;
+  resPos -= vec3(1.0f, 1.0f, 0.0f);
 
-  gl_Position = vec4(camPos * ubo.cam.zoom, 1.0f);
+  gl_Position = vec4(resPos * ubo.cam.zoom, 1.0f);
 
   f_Color = v_Color.abgr;
   f_TexCoord = v_TexCoord;

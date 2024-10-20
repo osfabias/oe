@@ -18,6 +18,7 @@ set(OE_SOURCE_FILES
   ./src/log.c
   ./src/gfx.c
   ./src/init.c
+  ./src/math.c
   ./src/utils.c
   ./src/input.c
 )

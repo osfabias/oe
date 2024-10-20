@@ -16,6 +16,7 @@
 
 #define MAX_FRAMES_COUNT     3
 #define RESERVED_VERTS_COUNT 64000
+#define MAX_TEXTURE_PATH 128
 
 #define CUR_GRAPHICS_CMDBUF \
   s_cmdbufs[QUEUE_INDEX_GRAPHICS][s_cur_frame_ind]
@@ -28,6 +29,7 @@ struct texture {
   VkDeviceMemory mem;
   VkImageView view;
   int width, height;
+  char path[MAX_TEXTURE_PATH];
 };
 
 enum queue_index {
@@ -1464,7 +1466,7 @@ void draw_texture(vec2_t pos, rect_t src_rect, u32 tex_ind)
 {
   draw_texture_ext(
     (rect_t){ pos.x, pos.y, src_rect.width, src_rect.height },
-    src_rect,tex_ind, WHITE, 0.0f, 0.0f);
+    src_rect, tex_ind, WHITE, 0.0f, 0.0f);
 }
 
 void draw_texture_ext(rect_t dst_rect, rect_t src_rect, u32 tex_ind,
@@ -1475,13 +1477,13 @@ void draw_texture_ext(rect_t dst_rect, rect_t src_rect, u32 tex_ind,
          "verts number exceeds the limit");
 
   s_verts[s_vert_count++] = (_vert_t){
-    .pos     = {
+    .pos = {
       dst_rect.x,
       dst_rect.y,
       depth
     },
-    .color   = color,
-    .uv      = {
+    .color = color,
+    .uv = {
       src_rect.x,
       src_rect.y
     },
@@ -1489,13 +1491,13 @@ void draw_texture_ext(rect_t dst_rect, rect_t src_rect, u32 tex_ind,
   };
 
   s_verts[s_vert_count++] = (_vert_t){
-    .pos     = {
+    .pos = {
       dst_rect.x + dst_rect.width,
       dst_rect.y,
       depth
     },
-    .color   = color,
-    .uv      = {
+    .color = color,
+    .uv = {
       src_rect.x + src_rect.width,
       src_rect.y,
     },
@@ -1503,13 +1505,13 @@ void draw_texture_ext(rect_t dst_rect, rect_t src_rect, u32 tex_ind,
   };
 
   s_verts[s_vert_count++] = (_vert_t){
-    .pos     = {
+    .pos = {
       dst_rect.x + dst_rect.width,
       dst_rect.y + dst_rect.height,
       depth
     },
-    .color   = color,
-    .uv      = {
+    .color = color,
+    .uv = {
       src_rect.x + src_rect.width,
       src_rect.y + src_rect.height,
     },
@@ -1517,13 +1519,13 @@ void draw_texture_ext(rect_t dst_rect, rect_t src_rect, u32 tex_ind,
   };
 
   s_verts[s_vert_count++] = (_vert_t){
-    .pos     = {
+    .pos = {
       dst_rect.x,
       dst_rect.y + dst_rect.height,
       depth
     },
-    .color   = color,
-    .uv      = {
+    .color = color,
+    .uv = {
       src_rect.x,
       src_rect.y + src_rect.height,
     },
@@ -1721,7 +1723,8 @@ struct texture* texture_load(const char *path)
   vkFreeMemory(s_device, staging_buf_mem, NULL);
   vkDestroyBuffer(s_device, staging_buf, NULL);
 
-  info("loaded texture \"%s\" [%p]", path, tex);
+  memcpy(tex->path, path, strlen(path));
+  info("loaded texture \"%s\"", tex->path);
 
   return tex;
 }
@@ -1731,9 +1734,10 @@ void texture_free(struct texture* texture)
   vkDestroyImageView(s_device, texture->view, NULL);
   vkFreeMemory(s_device, texture->mem, NULL);
   vkDestroyImage(s_device, texture->image, NULL);
-  free(texture);
 
-  info("freed texture %p", texture);
+  info("freed texture \"%s\"", texture->path);
+
+  free(texture);
 }
 
 void texture_bind(texture_t texture, u32 ind)

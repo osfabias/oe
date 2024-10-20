@@ -35,6 +35,10 @@ typedef double f64;
  */
 typedef struct vec2 { f32 x, y; } vec2_t;
 
+extern vec2_t vec2_add(vec2_t v1, vec2_t v2);
+
+extern vec2_t vec2_sub(vec2_t v1, vec2_t v2);
+
 /**
  * @brief 2 dimensional vector.
  */
@@ -258,35 +262,35 @@ typedef enum btn {
 /**
  * @brief Returns whether the key was just pressed this frame or not.
  */
-extern int is_key_pressed(key_t key);
+extern i32 is_key_pressed(key_t key);
 
 /**
  * @brief Returns whether the key was down this frame or not.
  */
-extern int is_key_down(key_t key);
+extern i32 is_key_down(key_t key);
 
 /**
  * @brief Returns whether the key was just released this frame or not.
  */
-extern int is_key_released(key_t key);
+extern i32 is_key_released(key_t key);
 
 /**
  * @brief Returns whether the mouse button was just pressed
  *        this frame or not.
  */
-extern int is_btn_pressed(btn_t btn);
+extern i32 is_btn_pressed(btn_t btn);
 
 /**
  * @brief Returns whether the mouse button was down
  *        this frame or not.
  */
-extern int is_btn_down(btn_t btn);
+extern i32 is_btn_down(btn_t btn);
 
 /**
  * @brief Returns whether the mouse button was
  *        just released this frame or not.
  */
-extern int is_btn_released(btn_t btn);
+extern i32 is_btn_released(btn_t btn);
 
 /**
  * @brief Returns mouse position in the window.
@@ -306,6 +310,9 @@ extern float mouse_wheel(void);
 #define MAX_TEXTURE_COUNT   (DEFAULT_TEXTURE_IND + 1)
 
 #define WHITE 0xffffffff
+#define RED   0xff0000ff
+#define GREEN 0x00ff00ff
+#define BLUE  0x0000ffff
 
 /**
  * @brief 32 bit color.
