@@ -16,18 +16,18 @@ layout(binding = 0) uniform UBO {
 } ubo;
 
 layout(location = 0) out vec4 f_Color;
-layout(location = 1) out vec2 f_TexCoord;
-layout(location = 2) out uint f_TexInd;
+layout(location = 1) out uint f_TexInd;
+layout(location = 2) out vec2 f_TexCoord;
 
 void main() {
-  vec3 resPos = v_Position - vec3(ubo.cam.pos, 0.0f);
+  vec2 resPos = v_Position.xy - ubo.cam.pos;
 
   resPos.x /= ubo.cam.view.x;
   resPos.y /= ubo.cam.view.y;
   resPos *= 2;
-  resPos -= vec3(1.0f, 1.0f, 0.0f);
+  resPos -= vec2(1.0f, 1.0f);
 
-  gl_Position = vec4(resPos * ubo.cam.zoom, 1.0f);
+  gl_Position = vec4(resPos * ubo.cam.zoom, v_Position.z, 1.0f);
 
   f_Color = v_Color.abgr;
   f_TexCoord = v_TexCoord;

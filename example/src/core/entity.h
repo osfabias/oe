@@ -14,6 +14,7 @@ typedef struct sprite {
   u8     tex_id;
   rect_t src_rect;
   vec2_t anchor;
+  float  depth;
 } sprite_t;
 
 typedef enum collider_type {

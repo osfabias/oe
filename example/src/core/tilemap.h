@@ -47,6 +47,5 @@ void tilemap_draw(
 
 int tilemap_point_hit(tilemap_t tilemap, vec2_t pos);
 
-int tilemap_hit(tilemap_t tilemap, transform_t transform,
-                collider_t collider);
+int tilemap_hit(tilemap_t tilemap, vec2_t pos, collider_t collider);
 

@@ -17,7 +17,7 @@ typedef struct _vert {
   vec3_t  pos;
   color_t color;
   vec2_t  uv;
-  u8      tex_ind;
+  u8      tex_id;
 } _vert_t;
 
 typedef struct _ubo {

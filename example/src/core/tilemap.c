@@ -7,6 +7,8 @@
 #include "core/tilemap.h"
 #include "core/entity.h"
 
+#define TILE_COLLISION_OFFSET 8.0f
+
 // this variable represents tile origins on texture
 static const struct { int x, y; }
   s_origs[TILE_TYPE_MAX_ENUM][TILE_VARIANT_MAX_ENUM] = {
@@ -34,7 +36,8 @@ static const struct { int x, y; }
   },
 };
 
-int tilemap_load(const char *filename, tilemap_t *tilemap) {
+int tilemap_load(const char *filename, tilemap_t *tilemap)
+{
   FILE *fd = fopen(filename, "rb");
   if (!fd) return 0;
 
@@ -60,12 +63,14 @@ int tilemap_load(const char *filename, tilemap_t *tilemap) {
   return 1;
 }
 
-void tilemap_free(tilemap_t *tilemap) {
+void tilemap_free(tilemap_t *tilemap)
+{
   free(tilemap->cells);
   memset(tilemap, 0, sizeof(*tilemap));
 }
 
-int tilemap_save(const char *filename, const tilemap_t *tilemap) {
+int tilemap_save(const char *filename, const tilemap_t *tilemap)
+{
   FILE *fd = fopen(filename, "wb");
   if (!fd) return 0;
 
@@ -82,7 +87,8 @@ int tilemap_save(const char *filename, const tilemap_t *tilemap) {
   return 1;
 }
 
-void tilemap_draw(const tilemap_t *tilemap, u16 tex_id, camera_t cam) {
+void tilemap_draw(const tilemap_t *tilemap, u16 tex_id, camera_t cam)
+{
   const int xstart = (int)cam.pos.x / TILEMAP_TILE_SIZE;
   const int ystart = (int)cam.pos.y / TILEMAP_TILE_SIZE;
 
@@ -96,9 +102,11 @@ void tilemap_draw(const tilemap_t *tilemap, u16 tex_id, camera_t cam) {
       const int variant = tilemap->cells[ind] & 0x0f;
       const int type    = tilemap->cells[ind] >> 4;
 
-      const vec2_t pos = {
-        .x = j * TILEMAP_TILE_SIZE,
-        .y = i * TILEMAP_TILE_SIZE,
+      const rect_t dst_rect = {
+        .x      = j * TILEMAP_TILE_SIZE,
+        .y      = i * TILEMAP_TILE_SIZE,
+        .width  = TILEMAP_TILE_SIZE,
+        .height = TILEMAP_TILE_SIZE,
       };
 
       const rect_t src_rect = {
@@ -108,29 +116,31 @@ void tilemap_draw(const tilemap_t *tilemap, u16 tex_id, camera_t cam) {
         .height = TILEMAP_TILE_SIZE,
       };
 
-      draw_texture(pos, src_rect, tex_id);
+      draw_texture_ext(dst_rect, src_rect, tex_id, WHITE, 0.0f, 0.0f);
     }
   }
 }
 
-int tilemap_point_hit(tilemap_t tilemap, vec2_t pos) {
+int tilemap_point_hit(tilemap_t tilemap, vec2_t pos)
+{
   const int x = (int)pos.x / TILEMAP_TILE_SIZE;
   const int y = (int)pos.y / TILEMAP_TILE_SIZE;
 
   return tilemap.cells[y * tilemap.width + x] >> 4;
 }
 
-int tilemap_hit(tilemap_t tilemap, transform_t transform,
-                collider_t collider) {
-  transform.pos.x += collider.offset.x;
-  transform.pos.y += collider.offset.y;
+int tilemap_hit(tilemap_t tilemap, vec2_t pos, collider_t collider)
+{
+  pos.x += collider.offset.x;
+  pos.y += collider.offset.y - TILE_COLLISION_OFFSET;
 
-  assert(collider.type == COLLIDER_TYPE_AABB, "unsupported collider type.");
+  assert(collider.type == COLLIDER_TYPE_AABB,
+         "unsupported collider type.");
 
-  int x1 = transform.pos.x / TILEMAP_TILE_SIZE;
-  int y1 = transform.pos.y / TILEMAP_TILE_SIZE;
-  int x2 = (transform.pos.x + collider.bounds.size.x) / TILEMAP_TILE_SIZE;
-  int y2 = (transform.pos.y + collider.bounds.size.y) / TILEMAP_TILE_SIZE;
+  int x1 = pos.x / TILEMAP_TILE_SIZE;
+  int y1 = pos.y / TILEMAP_TILE_SIZE;
+  int x2 = (pos.x + collider.bounds.size.x) / TILEMAP_TILE_SIZE;
+  int y2 = (pos.y + collider.bounds.size.y) / TILEMAP_TILE_SIZE;
 
   if (
     (tilemap.cells[x1 + y1 * tilemap.width] >> 4) ||
